@@ -2,10 +2,10 @@
   "name": "ukulele-selfbot",
   "version": "1.0.0",
   "description": "Discord Self-Bot for testing and fun",
-  "main": "selfbot.js",
+  "main": "index.js",
   "type": "commonjs",
   "dependencies": {
-    "@discordjs/voice": "^0.19.2",
+    "@discordjs/voice": "^0.17.0",
     "debug": "^4.4.3",
     "discord.js-selfbot-v13": "^3.4.4",
     "express": "^5.2.1",
