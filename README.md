@@ -1,5 +1,7 @@
 # 🎸 DARSHON MUSIC Self-Bot (Node.js)
 
+> **Developer:** DEVELOPER DARSHON
+
 This is a Discord Self-Bot that can be used to customize your own secondary/alternative account through various commands.
 
 ## 🚀 How to Run
@@ -73,3 +75,10 @@ To play Spotify links directly, you need to add your Spotify Client ID and Clien
    }
    ```
 *(Note: If Spotify credentials are not set, you can still search for songs by title or paste direct YouTube links to listen to music.)*
+
+---
+
+## 👤 Developer
+
+Developed & Maintained by **DEVELOPER DARSHON**.
+
