@@ -31,6 +31,8 @@ const reconnectBtn = document.getElementById('reconnect-btn');
 
 // Loop, Shuffle, and Volume DOM Elements
 const loopBtn = document.getElementById('loop-btn');
+const autoplayBtn = document.getElementById('autoplay-btn');
+const mode247Btn = document.getElementById('mode247-btn');
 const shuffleBtn = document.getElementById('shuffle-btn');
 const volumeSlider = document.getElementById('volume-slider');
 const volumeVal = document.getElementById('volume-val');
@@ -99,6 +101,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Loop control
     if (loopBtn) {
         loopBtn.addEventListener('click', handleLoopToggle);
+    }
+
+    // Autoplay & 24/7 controls
+    if (autoplayBtn) {
+        autoplayBtn.addEventListener('click', handleAutoplayToggle);
+    }
+    if (mode247Btn) {
+        mode247Btn.addEventListener('click', handle247Toggle);
     }
 
     // Shuffle control
@@ -247,7 +257,7 @@ function updateUI(status) {
     // 5. Render Play Queue (Lazy/Optimized rendering)
     renderQueue(status.queue);
 
-    // 6. Update Loop button states
+    // 6. Update Loop, 24/7, and Autoplay button states
     if (loopBtn) {
         if (status.loopStatus === 'queue') {
             loopBtn.className = 'btn btn-secondary btn-loop-queue';
@@ -261,6 +271,30 @@ function updateUI(status) {
             loopBtn.className = 'btn btn-secondary';
             loopBtn.querySelector('span').innerText = 'Loop: Off';
             loopBtn.title = 'Loop Mode (Off)';
+        }
+    }
+
+    if (autoplayBtn) {
+        if (status.isAutoplay) {
+            autoplayBtn.className = 'btn btn-secondary btn-autoplay-active';
+            autoplayBtn.querySelector('span').innerText = 'Random: On';
+            autoplayBtn.title = 'Random Music Autoplay (On)';
+        } else {
+            autoplayBtn.className = 'btn btn-secondary';
+            autoplayBtn.querySelector('span').innerText = 'Random: Off';
+            autoplayBtn.title = 'Random Music Autoplay (Off)';
+        }
+    }
+
+    if (mode247Btn) {
+        if (status.is247) {
+            mode247Btn.className = 'btn btn-secondary btn-247-active';
+            mode247Btn.querySelector('span').innerText = '24/7: On';
+            mode247Btn.title = '24/7 Mode (On)';
+        } else {
+            mode247Btn.className = 'btn btn-secondary';
+            mode247Btn.querySelector('span').innerText = '24/7: Off';
+            mode247Btn.title = '24/7 Mode (Off)';
         }
     }
 
@@ -498,3 +532,40 @@ function handleVolumeChange() {
         }
     }, 100);
 }
+
+// 24/7 Mode toggle handler
+async function handle247Toggle() {
+    try {
+        const nextState = !currentStatus.is247;
+        const res = await fetch('/api/247', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: nextState })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to toggle 24/7 mode');
+        showToast(data.is247 ? '♾️ 24/7 Mode Activated!' : '🛑 24/7 Mode Deactivated', 'success');
+        pollStatus();
+    } catch (err) {
+        showToast(err.message, 'danger');
+    }
+}
+
+// Random Autoplay toggle handler
+async function handleAutoplayToggle() {
+    try {
+        const nextState = !currentStatus.isAutoplay;
+        const res = await fetch('/api/random', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: nextState })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to toggle Random Autoplay');
+        showToast(data.isAutoplay ? '🎲 Random Music Autoplay Activated!' : '🛑 Random Music Autoplay Disabled', 'success');
+        pollStatus();
+    } catch (err) {
+        showToast(err.message, 'danger');
+    }
+}
+

@@ -155,6 +155,41 @@ let queue = [];
 let shoukakuPlayer = null;
 let loopStatus = 'none'; // 'none' | 'song' | 'queue'
 let currentVolume = 1.0;
+let is247 = false;
+let isAutoplay = false;
+let connectedChannelName = null;
+let connectedGuildName = null;
+
+const RANDOM_AUTOPLAY_QUERIES = [
+    'lofi hip hop beats to relax study to',
+    'trending music mix 2026',
+    'chill lofi beats mix',
+    'top pop music hits',
+    'acoustic relax playlist',
+    'synthwave retro chill mix',
+    'bangla popular songs mix',
+    'top gaming music mix',
+    'deep focus lofi chill'
+];
+
+async function playAutoplaySong(textChannel = null) {
+    if (queue.length > 0) return;
+    const randomQuery = RANDOM_AUTOPLAY_QUERIES[Math.floor(Math.random() * RANDOM_AUTOPLAY_QUERIES.length)];
+    console.log(`\x1b[35m[24/7 Autoplay] Queue empty. Resolving random song for query: "${randomQuery}"...\x1b[0m`);
+    try {
+        const songs = await resolveSong(randomQuery);
+        if (songs && songs.length > 0) {
+            const randomTrack = songs[Math.floor(Math.random() * songs.length)];
+            queue.push(randomTrack);
+            if (textChannel) {
+                sendTempResponse(textChannel, `🎲 **[24/7 Autoplay] Playing random track:** \`${randomTrack.title}\``, 8000);
+            }
+            playSong(textChannel);
+        }
+    } catch (err) {
+        console.error(`[24/7 Autoplay Error] Failed to fetch random song:`, err.message);
+    }
+}
 
 function handleTrackEnd() {
     if (loopStatus === 'song') {
@@ -171,7 +206,11 @@ function handleTrackEnd() {
         playSong(null);
     } else {
         queue.shift();
-        playSong(null);
+        if (queue.length === 0 && (isAutoplay || is247)) {
+            playAutoplaySong(null);
+        } else {
+            playSong(null);
+        }
     }
 }
 
@@ -197,6 +236,8 @@ function cleanupPlayerState() {
     shoukakuPlayer = null;
     queue = [];
     loopStatus = 'none';
+    connectedChannelName = null;
+    connectedGuildName = null;
 }
 
 // Helper to automatically find target voice channel
@@ -228,7 +269,11 @@ async function getTargetVoiceChannel(message = null, targetOwnerId = null) {
 async function connectToVoiceChannel(channel) {
     if (shoukakuPlayer) {
         // If already connected to the same channel, do nothing
-        if (shoukakuPlayer.channelId === channel.id) return shoukakuPlayer;
+        if (shoukakuPlayer.channelId === channel.id) {
+            connectedChannelName = channel.name || connectedChannelName;
+            connectedGuildName = channel.guild?.name || connectedGuildName;
+            return shoukakuPlayer;
+        }
 
         // Save current state before leaving to prevent losing active queue/volume settings
         const oldGuildId = shoukakuPlayer.guildId;
@@ -243,6 +288,9 @@ async function connectToVoiceChannel(channel) {
         loopStatus = savedLoop;
         currentVolume = savedVolume;
     }
+
+    connectedChannelName = channel.name || null;
+    connectedGuildName = channel.guild ? channel.guild.name : null;
 
     const player = await shoukaku.joinVoiceChannel({
         guildId: channel.guild.id,
@@ -488,6 +536,10 @@ function getYoutubeStream(videoUrl) {
 // Play song helper
 async function playSong(textChannel) {
     if (queue.length === 0) {
+        if (isAutoplay || is247) {
+            playAutoplaySong(textChannel);
+            return;
+        }
         if (textChannel) {
             sendTempResponse(textChannel, '🎶 **Queue is empty. Bot will stay in the voice channel.**', 8000);
         }
@@ -664,15 +716,17 @@ client.on('messageCreate', async (message) => {
 • \`${prefix}embed <title> | <description>\` - Sends a stylized blockquote message.
 • \`${prefix}purge <count>\` - Deletes your last N messages in this channel.
 • \`${prefix}info\` - Displays self-bot info.
-• \`${prefix}play <song title|URL>\` - Plays a song from YouTube/Spotify in your voice channel.
+• \`${prefix}play <song title|URL>\` - Plays a song or playlist from YouTube/Spotify.
 • \`${prefix}skip\` - Skips the current song.
 • \`${prefix}stop\` - Stops music, clears queue, and leaves voice channel.
 • \`${prefix}pause\` - Pauses music.
 • \`${prefix}resume\` - Resumes paused music.
 • \`${prefix}queue\` - Shows the current playback queue.
-• \`${prefix}loop [off|queue|song]\` - Toggle loop status or set specific mode.
+• \`${prefix}loop [off|queue|song|playlist]\` - Toggle loop status or set specific mode.
 • \`${prefix}shuffle\` - Shuffles upcoming tracks in the queue.
-• \`${prefix}volume [0-200]\` - View or set volume level (default 100).`;
+• \`${prefix}volume [0-200]\` - View or set volume level (default 100).
+• \`${prefix}247\` - Toggle 24/7 Voice Channel & Autoplay mode.
+• \`${prefix}autoplay\` or \`${prefix}random\` - Toggle random music autoplay mode.`;
         
         await sendResponse(message, helpMessage);
     }
@@ -966,6 +1020,39 @@ ${desc}
             await shoukakuPlayer.setGlobalVolume(parsed);
         }
         await sendResponse(message, `🔊 **Volume updated to:** \`${parsed}%\``);
+    }
+
+    // 24/7 Mode Command
+    if (command === '247' || command === '24/7' || command === 'twentyfour') {
+        const subMode = args[0]?.toLowerCase();
+        if (subMode === 'playlist' || subMode === 'queue') {
+            loopStatus = 'queue';
+            is247 = true;
+            await sendResponse(message, '♾️ **24/7 Playlist Mode Activated!** The current playlist will repeat continuously 24/7.');
+        } else {
+            is247 = !is247;
+            if (is247) {
+                isAutoplay = true;
+                if (queue.length === 0) playAutoplaySong(message.channel);
+                await sendResponse(message, '♾️ **24/7 Mode Activated!** Bot will remain in VC and play continuous music automatically.');
+            } else {
+                isAutoplay = false;
+                await sendResponse(message, '🛑 **24/7 Mode Deactivated.**');
+            }
+        }
+    }
+
+    // Autoplay / Random Music Command
+    if (command === 'autoplay' || command === 'random' || command === 'auto') {
+        isAutoplay = !isAutoplay;
+        if (isAutoplay) {
+            await sendResponse(message, '🎲 **Random Autoplay Mode Enabled!** Bot will pick random songs when queue is empty.');
+            if (queue.length === 0) {
+                playAutoplaySong(message.channel);
+            }
+        } else {
+            await sendResponse(message, '🛑 **Random Autoplay Mode Disabled.**');
+        }
     }
 });
 
@@ -1265,19 +1352,38 @@ webApp.post('/api/config', async (req, res) => {
 });
 
 // Get status API
-webApp.get('/api/status', (req, res) => {
-    let channelName = null;
-    let guildName = null;
+webApp.get('/api/status', async (req, res) => {
+    let channelName = connectedChannelName;
+    let guildName = connectedGuildName;
+
     if (shoukakuPlayer) {
         const channelId = shoukakuPlayer.channelId;
         const guildId = shoukakuPlayer.guildId;
-        const channel = client.channels.cache.get(channelId);
-        if (channel) {
-            channelName = channel.name;
-            guildName = channel.guild.name;
-        } else {
-            channelName = channelId;
-            guildName = guildId;
+
+        if (!guildName || guildName === guildId) {
+            const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
+            if (guild) {
+                guildName = guild.name;
+                connectedGuildName = guild.name;
+            } else {
+                guildName = guildId;
+            }
+        }
+
+        if (!channelName || channelName === channelId) {
+            const channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId).catch(() => null);
+            if (channel) {
+                channelName = channel.name;
+                connectedChannelName = channel.name;
+                if (!guildName || guildName === guildId) {
+                    if (channel.guild) {
+                        guildName = channel.guild.name;
+                        connectedGuildName = channel.guild.name;
+                    }
+                }
+            } else {
+                channelName = channelId;
+            }
         }
     }
     res.json({
@@ -1289,6 +1395,8 @@ webApp.get('/api/status', (req, res) => {
         paused: shoukakuPlayer ? shoukakuPlayer.paused : false,
         playing: shoukakuPlayer ? !shoukakuPlayer.paused : false,
         loopStatus,
+        is247,
+        isAutoplay,
         volume: Math.round(currentVolume * 100)
     });
 });
@@ -1447,6 +1555,35 @@ webApp.post('/api/shuffle', (req, res) => {
     queue = [nowPlaying, ...toShuffle];
     console.log(`\x1b[32m[Web API] Shuffled ${toShuffle.length} upcoming songs!\x1b[0m`);
     res.json({ success: true });
+});
+
+webApp.post('/api/247', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') {
+        is247 = enabled;
+    } else {
+        is247 = !is247;
+    }
+    if (is247) {
+        isAutoplay = true;
+        if (queue.length === 0) playAutoplaySong();
+    }
+    console.log(`\x1b[32m[Web API] 24/7 Mode updated to: ${is247}\x1b[0m`);
+    res.json({ success: true, is247, isAutoplay });
+});
+
+webApp.post('/api/random', (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === 'boolean') {
+        isAutoplay = enabled;
+    } else {
+        isAutoplay = !isAutoplay;
+    }
+    if (isAutoplay && queue.length === 0) {
+        playAutoplaySong();
+    }
+    console.log(`\x1b[32m[Web API] Random Autoplay mode updated to: ${isAutoplay}\x1b[0m`);
+    res.json({ success: true, isAutoplay });
 });
 
 // Reconnect: Disconnect from current VC and reconnect to owner's current VC
