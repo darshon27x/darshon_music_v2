@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Darshon Music Player Dashboard</title>
+    <title>Darshon Music Cyber-Deck</title>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <!-- FontAwesome for Icons -->
@@ -12,135 +12,204 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="glass-bg"></div>
-    <div class="container">
-        <!-- Sidebar or Header -->
-        <header class="dashboard-header">
+    <!-- Background Animated Orbs -->
+    <div class="glass-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="orb orb-4"></div>
+    </div>
+    
+    <!-- Mobile Top Header -->
+    <header class="mobile-header">
+        <div class="mobile-logo">
+            <i class="fa-solid fa-compact-disc text-accent"></i>
+            <h2>Darshon <span>Music</span></h2>
+        </div>
+        <a href="/settings.html" class="mobile-settings-btn" title="Setup Portal">
+            <i class="fa-solid fa-gear"></i>
+        </a>
+    </header>
+    
+    <div class="deck-container">
+        <!-- LEFT PANEL: Brand, Status, and Dashboard Settings -->
+        <aside class="deck-sidebar card" id="panel-status">
             <div class="logo">
-                <i class="fa-solid fa-music pulse-icon"></i>
-                <h1>Darshon <span>Music Player</span></h1>
+                <i class="fa-solid fa-compact-disc pulse-icon text-accent"></i>
+                <h1>Darshon <span>Music</span></h1>
             </div>
-            <div id="bot-status" class="status-badge offline">
-                <span class="dot"></span> <span class="status-text">Disconnected</span>
-            </div>
-        </header>
 
-        <!-- Main Panel -->
-        <main class="dashboard-grid">
-            <!-- Left Side: Search and Controls -->
-            <section class="control-panel card">
-                <h2><i class="fa-solid fa-circle-play"></i> Player Control</h2>
+            <div class="sidebar-status-section">
+                <div id="bot-status" class="status-badge offline">
+                    <span class="dot"></span> <span class="status-text">Disconnected</span>
+                </div>
                 
-                <!-- Connection Status Details -->
                 <div class="vc-details" id="vc-details-panel">
-                    <p class="vc-info-text"><i class="fa-solid fa-signal text-accent"></i> Not joined to any Voice Channel.</p>
+                    <p class="vc-info-text">
+                        <i class="fa-solid fa-signal"></i> Not joined to any Voice Channel.
+                    </p>
                 </div>
+            </div>
 
-                <!-- Owner Selection Dropdown -->
-                <div class="owner-selector-group">
-                    <label for="owner-select"><i class="fa-solid fa-user-shield"></i> Target Owner VC:</label>
-                    <div class="select-wrapper">
-                        <select id="owner-select">
-                            <option value="auto">Auto (Find Any Owner)</option>
-                            <option value="custom">Custom Voice Channel ID...</option>
-                        </select>
-                        <i class="fa-solid fa-chevron-down select-chevron"></i>
+            <!-- Volume Deck -->
+            <div class="volume-deck">
+                <div class="volume-control-group">
+                    <label for="volume-slider">
+                        <i id="volume-icon" class="fa-solid fa-volume-high"></i> Volume: <span id="volume-val">100%</span>
+                    </label>
+                    <div class="slider-container">
+                        <input type="range" id="volume-slider" min="0" max="150" value="100" class="volume-slider">
                     </div>
                 </div>
+            </div>
 
-                <!-- Custom VC Input (Initially Hidden) -->
-                <div id="custom-vc-group" class="owner-selector-group hidden">
-                    <label for="custom-vc-input"><i class="fa-solid fa-hashtag text-accent"></i> Custom Voice Channel ID:</label>
-                    <div class="select-wrapper">
-                        <div class="input-group">
-                            <i class="fa-solid fa-key" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-secondary); font-size: 1.1rem; z-index: 10;"></i>
-                            <input type="text" id="custom-vc-input" placeholder="Enter Voice Channel ID (e.g. 14929855...)" style="padding-left: 2.8rem;">
+            <!-- Config Gear link -->
+            <div class="sidebar-footer">
+                <button id="reconnect-btn" class="btn btn-secondary reconnect-btn" title="Reconnect to your current Voice Channel">
+                    <i class="fa-solid fa-rotate-right"></i> Reconnect VC
+                </button>
+                <a href="/settings.html" class="btn btn-secondary settings-link-btn" title="Configure Selfbot Settings">
+                    <i class="fa-solid fa-sliders"></i> Web Setup Portal
+                </a>
+            </div>
+        </aside>
+
+        <!-- CENTER STAGE: Huge 3D Hologram Music Console -->
+        <main class="deck-center card active-tab" id="current-song-card">
+            <div class="hologram-stage">
+                <!-- Large 3D Spinning Vinyl Record -->
+                <div class="vinyl-container-large">
+                    <div class="vinyl-record">
+                        <div class="vinyl-reflection"></div>
+                        <div class="vinyl-label">
+                            <div class="vinyl-center-dot"></div>
                         </div>
                     </div>
+                    <div class="stylus-arm"></div>
                 </div>
 
-                <!-- Search / Play Section -->
-                <div class="search-section">
-                    <div class="input-group">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                        <input type="text" id="search-input" placeholder="Search song name or YouTube/Spotify URL...">
-                    </div>
-                    <button id="play-btn" class="btn btn-primary">
-                        <i class="fa-solid fa-play"></i> Play Song
+                <!-- Text metadata -->
+                <div class="hologram-details">
+                    <span class="playing-badge">Now Playing</span>
+                    <h2 id="current-song-title">No song playing</h2>
+                    <p id="current-song-status">Ready to stream tracks</p>
+                </div>
+
+                <!-- Circular visualizer wrapper -->
+                <div class="visualizer" id="wave-visualizer">
+                    <span class="bar bar-1"></span>
+                    <span class="bar bar-2"></span>
+                    <span class="bar bar-3"></span>
+                    <span class="bar bar-4"></span>
+                    <span class="bar bar-5"></span>
+                    <span class="bar bar-6"></span>
+                    <span class="bar bar-7"></span>
+                    <span class="bar bar-8"></span>
+                    <span class="bar bar-9"></span>
+                    <span class="bar bar-10"></span>
+                    <span class="bar bar-11"></span>
+                    <span class="bar bar-12"></span>
+                </div>
+            </div>
+
+            <!-- Sleek Control Capsule -->
+            <div class="control-capsule">
+                <div class="media-deck">
+                    <button id="loop-btn" class="btn btn-circle" title="Loop Mode (Off)">
+                        <i class="fa-solid fa-repeat"></i><span>Loop: Off</span>
+                    </button>
+                    
+                    <button id="play-pause-btn" class="btn btn-circle btn-main" title="Pause">
+                        <i class="fa-solid fa-pause" id="play-pause-icon"></i>
+                    </button>
+                    
+                    <button id="skip-btn" class="btn btn-circle" title="Skip Song">
+                        <i class="fa-solid fa-forward-step"></i>
+                    </button>
+                    
+                    <button id="shuffle-btn" class="btn btn-circle" title="Shuffle Queue">
+                        <i class="fa-solid fa-shuffle"></i>
                     </button>
                 </div>
-
-                <!-- Playing Panel Controls -->
-                <div class="media-controls">
-                    <button id="pause-btn" class="btn btn-secondary" title="Pause">
-                        <i class="fa-solid fa-pause"></i> Pause
-                    </button>
-                    <button id="resume-btn" class="btn btn-secondary hidden" title="Resume">
-                        <i class="fa-solid fa-play"></i> Resume
-                    </button>
-                    <button id="skip-btn" class="btn btn-secondary" title="Skip">
-                        <i class="fa-solid fa-forward-step"></i> Skip
-                    </button>
-                    <button id="stop-btn" class="btn btn-danger" title="Stop & Leave">
-                        <i class="fa-solid fa-stop"></i> Stop / Leave
-                    </button>
-                </div>
-
-                <!-- Extra Controls (Volume, Loop, Shuffle) -->
-                <div class="extra-controls">
-                    <!-- Loop and Shuffle Row -->
-                    <div class="quick-actions">
-                        <button id="loop-btn" class="btn btn-secondary" title="Loop Mode (Off)">
-                            <i class="fa-solid fa-repeat"></i> <span>Loop: Off</span>
-                        </button>
-                        <button id="shuffle-btn" class="btn btn-secondary" title="Shuffle Queue">
-                            <i class="fa-solid fa-shuffle"></i> Shuffle
-                        </button>
-                    </div>
-
-                    <!-- Volume Slider -->
-                    <div class="volume-control-group">
-                        <label for="volume-slider"><i id="volume-icon" class="fa-solid fa-volume-high"></i> Volume: <span id="volume-val">100%</span></label>
-                        <div class="slider-container">
-                            <input type="range" id="volume-slider" min="0" max="150" value="100" class="volume-slider">
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Right Side: Now Playing & Queue -->
-            <section class="music-info card">
-                <!-- Now Playing Card -->
-                <div class="now-playing-box">
-                    <h3><i class="fa-solid fa-music"></i> Now Playing</h3>
-                    <div class="song-card" id="current-song-card">
-                        <div class="song-info-fallback">
-                            <i class="fa-solid fa-compact-disc spin-disc"></i>
-                            <div class="fallback-details">
-                                <h4 id="current-song-title">No song playing</h4>
-                                <p id="current-song-status">Ready to play your favorite tracks</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Play Queue -->
-                <div class="queue-box">
-                    <h3><i class="fa-solid fa-list-ol"></i> Up Next</h3>
-                    <div class="queue-list-wrapper">
-                        <ul id="queue-list" class="queue-list">
-                            <li class="empty-queue-msg">The play queue is currently empty.</li>
-                        </ul>
-                    </div>
-                </div>
-            </section>
+                
+                <button id="stop-btn" class="btn btn-danger stop-capsule-btn" title="Stop & Leave Channel">
+                    <i class="fa-solid fa-circle-stop"></i> Stop & Disconnect
+                </button>
+            </div>
         </main>
+
+        <!-- RIGHT PANEL: Search Input & Queue List -->
+        <section class="deck-right card" id="panel-search">
+            <h3><i class="fa-solid fa-music text-accent"></i> Audio Search & Queue</h3>
+            
+            <!-- Connection Target selection -->
+            <div class="owner-selector-group">
+                <label for="owner-select"><i class="fa-solid fa-user-shield"></i> Target Owner VC</label>
+                <div class="select-wrapper">
+                    <select id="owner-select">
+                        <option value="auto">Auto (Find Any Owner)</option>
+                        <option value="custom">Custom Voice Channel ID...</option>
+                    </select>
+                    <i class="fa-solid fa-chevron-down select-chevron"></i>
+                </div>
+            </div>
+
+            <!-- Custom VC Input (Initially Hidden) -->
+            <div id="custom-vc-group" class="owner-selector-group hidden">
+                <label for="custom-vc-input"><i class="fa-solid fa-hashtag"></i> Custom Voice Channel ID</label>
+                <div class="select-wrapper">
+                    <div class="input-group">
+                        <i class="fa-solid fa-key" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-secondary); font-size: 1.1rem; z-index: 10;"></i>
+                        <input type="text" id="custom-vc-input" placeholder="Enter Voice Channel ID..." style="padding-left: 2.8rem;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search and Play -->
+            <div class="search-section">
+                <div class="input-group">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="search-input" placeholder="Search track or paste URL...">
+                </div>
+                <button id="play-btn" class="btn btn-primary play-btn-full">
+                    <i class="fa-solid fa-circle-play"></i> Play Track
+                </button>
+            </div>
+
+            <!-- Up Next List -->
+            <div class="queue-box">
+                <div class="queue-header">
+                    <h4><i class="fa-solid fa-indent text-accent"></i> Up Next Queue</h4>
+                </div>
+                <div class="queue-list-wrapper">
+                    <ul id="queue-list" class="queue-list">
+                        <li class="empty-queue-msg">The play queue is currently empty.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
     </div>
 
-    <!-- Toast Notifications -->
+    <!-- Mobile Bottom Navigation -->
+    <nav class="mobile-nav">
+        <button class="mobile-nav-item" data-tab="status">
+            <i class="fa-solid fa-chart-simple"></i>
+            <span>Status</span>
+        </button>
+        <button class="mobile-nav-item active" data-tab="player">
+            <i class="fa-solid fa-circle-play"></i>
+            <span>Player</span>
+        </button>
+        <button class="mobile-nav-item" data-tab="search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <span>Search</span>
+        </button>
+    </nav>
+
+    <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <!-- Frontend Script -->
+    <!-- Script file -->
     <script src="app.js"></script>
 </body>
 </html>

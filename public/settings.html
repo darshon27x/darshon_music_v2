@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Darshon Music Setup & Settings</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Specific enhancements for Settings page */
+        .settings-card {
+            max-width: 600px;
+            width: 100%;
+            margin: 4rem auto;
+        }
+        
+        @media (max-width: 768px) {
+            .settings-card {
+                margin: 1rem auto;
+                width: 95%;
+            }
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+        }
+
+        .form-group label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+
+        .form-group label i {
+            color: var(--text-accent);
+            font-size: 0.95rem;
+        }
+
+        .input-wrapper {
+            position: relative;
+            width: 100%;
+        }
+
+        .input-wrapper i {
+            position: absolute;
+            left: 1.15rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+            font-size: 1.05rem;
+            transition: color 0.3s ease;
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 1.05rem 1.25rem 1.05rem 3rem;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            color: var(--text-primary);
+            font-family: var(--font-stack);
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .input-wrapper input:focus {
+            outline: none;
+            border-color: var(--text-accent);
+            box-shadow: 0 0 15px rgba(167, 139, 250, 0.25), inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 1.15rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: color 0.3s ease;
+            z-index: 10;
+        }
+
+        .toggle-password:hover {
+            color: var(--text-accent);
+        }
+
+        .info-note {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            margin-top: 0.25rem;
+        }
+
+        .info-note code {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            color: var(--text-accent);
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .btn-row .btn {
+            flex: 1;
+        }
+
+        .settings-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .settings-header h1 {
+            font-size: 1.75rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #ffffff 40%, #c7d2fe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .settings-header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .setup-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 1rem;
+            padding: 0.6rem 1rem;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+        }
+    </style>
+</head>
+<body>
+    <div class="glass-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="orb orb-4"></div>
+    </div>
+    
+    <div class="container">
+        <div class="card settings-card">
+            <div class="settings-header">
+                <div class="logo" style="justify-content: center; margin-bottom: 1rem;">
+                    <i class="fa-solid fa-gear pulse-icon"></i>
+                    <h1>Darshon <span>Music Setup</span></h1>
+                </div>
+                <p>Configure credentials and owner settings for your Discord self-bot</p>
+                <div id="connection-indicator" class="setup-status">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i> Checking connection status...
+                </div>
+            </div>
+
+            <form id="settings-form">
+                <!-- Discord Token -->
+                <div class="form-group">
+                    <label for="bot-token"><i class="fa-solid fa-key"></i> Discord User Token</label>
+                    <div class="input-wrapper">
+                        <i class="fa-solid fa-user-lock"></i>
+                        <input type="password" id="bot-token" required placeholder="Paste your Discord User Token here...">
+                        <i class="fa-solid fa-eye toggle-password" id="toggle-token-visibility"></i>
+                    </div>
+                    <p class="info-note">
+                        <i class="fa-solid fa-triangle-exclamation" style="color: var(--text-accent);"></i> 
+                        Warning: Never share your Discord User token with anyone. It gives full access to your account.
+                    </p>
+                </div>
+
+                <!-- Owner IDs -->
+                <div class="form-group">
+                    <label for="owner-ids"><i class="fa-solid fa-user-shield"></i> Owner Discord IDs</label>
+                    <div class="input-wrapper">
+                        <i class="fa-solid fa-id-card"></i>
+                        <input type="text" id="owner-ids" required placeholder="e.g. 140565079880053974, 91776162892414977">
+                    </div>
+                    <p class="info-note">Comma-separated list of User IDs allowed to control the music playback. Your own ID is included automatically.</p>
+                </div>
+
+                <!-- Prefix -->
+                <div class="form-group">
+                    <label for="command-prefix"><i class="fa-solid fa-terminal"></i> Command Prefix</label>
+                    <div class="input-wrapper">
+                        <i class="fa-solid fa-chevron-right"></i>
+                        <input type="text" id="command-prefix" placeholder="e.g. >" default=">">
+                    </div>
+                    <p class="info-note">The character to prefix text commands in Discord (e.g. <code>&gt;play</code>).</p>
+                </div>
+
+                <!-- Web Port -->
+                <div class="form-group">
+                    <label for="web-port"><i class="fa-solid fa-server"></i> Web Dashboard Port</label>
+                    <div class="input-wrapper">
+                        <i class="fa-solid fa-network-wired"></i>
+                        <input type="number" id="web-port" required placeholder="3000" min="80" max="65535">
+                    </div>
+                    <p class="info-note">The port this dashboard will run on (Default: <code>3000</code>). Requires restart to change.</p>
+                </div>
+
+                <!-- Button Row -->
+                <div class="btn-row">
+                    <button type="button" id="back-btn" class="btn btn-secondary hidden">
+                        <i class="fa-solid fa-arrow-left"></i> Cancel / Dashboard
+                    </button>
+                    <button type="submit" id="save-btn" class="btn btn-primary">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Save & Connect Bot
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script>
+        const settingsForm = document.getElementById('settings-form');
+        const botTokenInput = document.getElementById('bot-token');
+        const toggleTokenVisibility = document.getElementById('toggle-token-visibility');
+        const ownerIdsInput = document.getElementById('owner-ids');
+        const commandPrefixInput = document.getElementById('command-prefix');
+        const webPortInput = document.getElementById('web-port');
+        const backBtn = document.getElementById('back-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const connectionIndicator = document.getElementById('connection-indicator');
+        const toastContainer = document.getElementById('toast-container');
+
+        // Toggle Token Visibility
+        toggleTokenVisibility.addEventListener('click', () => {
+            if (botTokenInput.type === 'password') {
+                botTokenInput.type = 'text';
+                toggleTokenVisibility.className = 'fa-solid fa-eye-slash toggle-password';
+            } else {
+                botTokenInput.type = 'password';
+                toggleTokenVisibility.className = 'fa-solid fa-eye toggle-password';
+            }
+        });
+
+        // Load existing configurations
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config-status');
+                if (!res.ok) throw new Error('API server unreachable');
+                const data = await res.json();
+                
+                if (data.loggedIn) {
+                    connectionIndicator.innerHTML = '<i class="fa-solid fa-circle-check" style="color: var(--success)"></i> Bot status: <strong>Logged In</strong>';
+                    connectionIndicator.style.color = 'var(--success)';
+                    backBtn.classList.remove('hidden');
+                } else if (data.hasToken) {
+                    connectionIndicator.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color: var(--text-accent)"></i> Bot status: <strong>Token set but not connected</strong>';
+                    connectionIndicator.style.color = 'var(--text-accent)';
+                } else {
+                    connectionIndicator.innerHTML = '<i class="fa-solid fa-circle-xmark" style="color: var(--danger)"></i> Bot status: <strong>Setup Required</strong>';
+                    connectionIndicator.style.color = 'var(--danger)';
+                }
+
+                // Pre-fill form values
+                if (data.config) {
+                    botTokenInput.value = data.hasToken ? '••••••••••••••••••••••••••••••••••••••••' : '';
+                    ownerIdsInput.value = data.config.owner_ids ? data.config.owner_ids.join(', ') : '';
+                    commandPrefixInput.value = data.config.prefix || '>';
+                    webPortInput.value = data.config.web_port || 3000;
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to connect to backend configuration API', 'danger');
+                connectionIndicator.innerHTML = '<i class="fa-solid fa-triangle-exclamation" style="color: var(--danger)"></i> Server status: <strong>Offline</strong>';
+                connectionIndicator.style.color = 'var(--danger)';
+            }
+        }
+
+        // Handle Save/Submit configuration
+        settingsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const token = botTokenInput.value.includes('••') ? null : botTokenInput.value.trim();
+            const ownerIds = ownerIdsInput.value.split(',').map(id => id.trim()).filter(id => id.length > 0);
+            const prefix = commandPrefixInput.value.trim() || '>';
+            const webPort = parseInt(webPortInput.value, 10) || 3000;
+
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving & Connecting...';
+            showToast('Saving credentials and starting bot client...', 'success');
+
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, ownerIds, prefix, webPort })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to save configuration');
+
+                showToast('Settings saved successfully! Redirecting...', 'success');
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+            } catch (err) {
+                showToast(err.message, 'danger');
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Save & Connect Bot';
+            }
+        });
+
+        // Cancel / Back to dashboard action
+        backBtn.addEventListener('click', () => {
+            window.location.href = '/';
+        });
+
+        // Standard notification toast
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            let iconClass = 'fa-circle-check';
+            if (type === 'danger') iconClass = 'fa-circle-xmark';
+            
+            toast.innerHTML = `
+                <i class="fa-solid ${iconClass}"></i>
+                <span>${message}</span>
+            `;
+
+            toastContainer.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('show');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => {
+                    toast.remove();
+                }, 400);
+            }, 4000);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', loadConfig);
+    </script>
+</body>
+</html>

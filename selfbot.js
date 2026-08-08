@@ -1,25 +1,37 @@
+process.on('uncaughtException', (err) => {
+    console.error('\x1b[31m[Uncaught Exception]\x1b[0m', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('\x1b[31m[Unhandled Rejection]\x1b[0m', reason);
+});
+
+// Keep process active in headless container environments
+if (process.stdin.isTTY === false || !process.stdin.listening) {
+    try { process.stdin.resume(); } catch (e) {}
+}
+setInterval(() => {}, 30000);
+
+if (typeof globalThis.File === 'undefined') {
+    const { Blob } = require('buffer');
+    globalThis.File = class File extends Blob {
+        constructor(sources, fileName, options = {}) {
+            super(sources, options);
+            this.name = fileName;
+            this.lastModified = options.lastModified || Date.now();
+        }
+    };
+}
+
 const { Client } = require('discord.js-selfbot-v13');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const path = require('path');
-const { exec, spawn, execFile } = require('child_process');
-const { 
-    joinVoiceChannel, 
-    createAudioPlayer, 
-    createAudioResource, 
-    AudioPlayerStatus, 
-    VoiceConnectionStatus,
-    StreamType
-} = require('@discordjs/voice');
+const { Shoukaku, Connectors } = require('shoukaku');
 const play = require('play-dl');
-const ffmpegPath = require('ffmpeg-static');
 const yts = require('yt-search');
 
 // Prepend ffmpeg-static to process.env.PATH so @discordjs/voice/prism-media can find it automatically
-if (ffmpegPath && process.platform !== 'android') {
-    const ffmpegDir = path.dirname(ffmpegPath);
-    const separator = process.platform === 'win32' ? ';' : ':';
-    process.env.PATH = `${ffmpegDir}${separator}${process.env.PATH}`;
-}
 
 // Load config
 const configPath = path.join(__dirname, 'config.json');
@@ -35,8 +47,17 @@ if (!config.token || config.token === 'YOUR_DISCORD_USER_TOKEN') {
     process.exit(1);
 }
 
+class SelfbotDiscordJSConnector extends Connectors.DiscordJS {
+    listen(nodes) {
+        this.client.once('ready', () => this.ready(nodes));
+        this.client.once('clientReady', () => this.ready(nodes));
+        this.client.on('raw', (packet) => this.raw(packet));
+    }
+}
+
 const client = new Client({
     checkUpdate: false,
+    patchVoice: true,
     ws: {
         properties: {
             $os: 'Windows',
@@ -46,7 +67,7 @@ const client = new Client({
     }
 });
 
-const prefix = config.prefix || '>';
+let prefix = config.prefix || '>';
 
 // Setup Spotify credentials if available
 if (config.spotify_client_id && config.spotify_client_secret) {
@@ -64,126 +85,41 @@ if (config.spotify_client_id && config.spotify_client_secret) {
     console.log('\x1b[33m[Info] Spotify credentials not set in config.json. Spotify URLs may not work.\x1b[0m');
 }
 
-// Helper to parse cookies from multiple formats (JSON, Netscape, Raw Header String)
-function parseCookies(ytCookie) {
-    if (!ytCookie) return '';
-    
-    // Case 1: If it's a JSON array or JSON string of array
-    let cookiesArray = null;
-    if (typeof ytCookie === 'string') {
-        try {
-            cookiesArray = JSON.parse(ytCookie);
-        } catch (e) {}
-    } else if (Array.isArray(ytCookie)) {
-        cookiesArray = ytCookie;
+const defaultNodes = [
+    {
+        name: "Public Node 1 (Ajieblogs)",
+        url: "lava-v4.ajieblogs.eu.org:443",
+        auth: "https://dsc.gg/ajidevserver",
+        secure: true
+    },
+    {
+        name: "Public Node 2 (Disutils)",
+        url: "lavalink-1.is-it.pink:443",
+        auth: "https://disutils.com",
+        secure: true
+    },
+    {
+        name: "Public Node 3 (Disutils Backup)",
+        url: "lavalink-2.is-it.pink:443",
+        auth: "https://disutils.com",
+        secure: true
     }
-    
-    if (cookiesArray && Array.isArray(cookiesArray)) {
-        return cookiesArray.map(c => `${c.name}=${c.value}`).join('; ');
-    }
-    
-    // Case 2: If it's a string, check if it's Netscape format (tab/space separated)
-    if (typeof ytCookie === 'string') {
-        const lines = ytCookie.split('\n');
-        const netscapeCookies = [];
-        for (let line of lines) {
-            line = line.trim();
-            if (!line || line.startsWith('#')) continue;
-            
-            const parts = line.split(/\s+/);
-            if (parts.length >= 7) {
-                const name = parts[5];
-                const value = parts[6];
-                netscapeCookies.push(`${name}=${value}`);
-            }
-        }
-        if (netscapeCookies.length > 0) {
-            return netscapeCookies.join('; ');
-        }
-        
-        // Case 3: Raw cookie header string
-        return ytCookie;
-    }
-    
-    return '';
-}
+];
 
-function writeNetscapeCookieFile(rawCookie, filePath) {
-    let cookies = [];
-    
-    // Parse cookies into key-value pairs
-    if (typeof rawCookie === 'string') {
-        // Check if it's already a Netscape format
-        if (rawCookie.includes('\t') || rawCookie.startsWith('#')) {
-            fs.writeFileSync(filePath, rawCookie);
-            return;
-        }
-        
-        // Try parsing JSON array
-        try {
-            const parsed = JSON.parse(rawCookie);
-            if (Array.isArray(parsed)) {
-                cookies = parsed;
-            }
-        } catch (e) {
-            // Semicolon separated header string
-            const pairs = rawCookie.split(';');
-            for (let pair of pairs) {
-                const eqIdx = pair.indexOf('=');
-                if (eqIdx !== -1) {
-                    const name = pair.slice(0, eqIdx).trim();
-                    const value = pair.slice(eqIdx + 1).trim();
-                    if (name && value) {
-                        cookies.push({ name, value });
-                    }
-                }
-            }
-        }
-    } else if (Array.isArray(rawCookie)) {
-        cookies = rawCookie;
-    }
-    
-    // Write Netscape format
-    let content = "# Netscape HTTP Cookie File\n# This file is generated by Ukulele Selfbot\n\n";
-    for (let c of cookies) {
-        const domain = '.youtube.com';
-        const includeSub = 'TRUE';
-        const path = '/';
-        const secure = 'TRUE';
-        const expiry = '0'; // session cookie
-        content += `${domain}\t${includeSub}\t${path}\t${secure}\t${expiry}\t${c.name}\t${c.value}\n`;
-    }
-    
-    fs.writeFileSync(filePath, content, 'utf-8');
-}
+const nodesToConnect = config.lavalink_nodes && config.lavalink_nodes.length > 0 ? config.lavalink_nodes : defaultNodes;
 
-// Setup YouTube cookies or browser extraction
-if (config.youtube_cookies_from_browser) {
-    console.log(`\x1b[32m[Success] YouTube cookie extraction enabled from browser: "${config.youtube_cookies_from_browser}".\x1b[0m`);
-} else if (config.youtube_cookie) {
-    const formattedCookie = parseCookies(config.youtube_cookie);
-    
-    // Generate Netscape cookies file for yt-dlp
-    const cookiePath = path.join(__dirname, 'cookies.txt');
-    try {
-        writeNetscapeCookieFile(config.youtube_cookie, cookiePath);
-        console.log('\x1b[32m[Success] Generated cookies.txt for yt-dlp.\x1b[0m');
-    } catch (err) {
-        console.warn(`\x1b[33m[Warning] Failed to generate cookies.txt: ${err.message}\x1b[0m`);
-    }
+const shoukaku = new Shoukaku(new SelfbotDiscordJSConnector(client), nodesToConnect, {
+    moveOnDisconnect: true,
+    resume: true,
+    resumeTimeout: 30,
+    reconnectInterval: 5000,
+    reconnectTries: 5
+});
 
-    play.setToken({
-        youtube: {
-            cookie: formattedCookie
-        }
-    }).then(() => {
-        console.log('\x1b[32m[Success] YouTube cookie configured for play-dl.\x1b[0m');
-    }).catch(err => {
-        console.warn(`\x1b[33m[Warning] YouTube cookie setup failed: ${err.message}\x1b[0m`);
-    });
-} else {
-    console.log('\x1b[33m[Info] YouTube cookie not set and browser cookie extraction is disabled in config.json. If you get "Sign in to confirm you\'re not a bot" errors, please configure one of them.\x1b[0m');
-}
+shoukaku.on('error', (name, error) => console.error(`[Lavalink Error] Node: ${name} ->`, error));
+shoukaku.on('ready', (name) => console.log(`\x1b[32m[Lavalink Ready] Node: ${name}\x1b[0m`));
+shoukaku.on('close', (name, code, reason) => console.log(`[Lavalink Closed] Node: ${name} with code ${code}, reason: ${reason}`));
+shoukaku.on('disconnect', (name, players, moved) => console.warn(`[Lavalink Disconnected] Node: ${name}. Players moved: ${moved}`));
 
 // Setup SoundCloud integration
 play.getFreeClientID().then(clientId => {
@@ -216,99 +152,59 @@ function cleanTitleForSearch(title) {
 
 // Music State
 let queue = [];
-let voiceConnection = null;
-let audioPlayer = null;
-let currentChildProcess = null;
+let shoukakuPlayer = null;
 let loopStatus = 'none'; // 'none' | 'song' | 'queue'
 let currentVolume = 1.0;
-let currentResource = null;
 
-// Resolve query helper
-// Helper to extract video metadata and direct stream URL using yt-dlp.exe
-function getYoutubeInfo(videoUrl) {
-    return new Promise((resolve, reject) => {
-        const ytdlpPath = process.platform === 'android' ? 'yt-dlp' : path.join(__dirname, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-        const args = ['--dump-json', '-f', 'bestaudio', '--js-runtimes', 'node', '--remote-components', 'ejs:github'];
-        
-        if (config.youtube_cookies_from_browser) {
-            args.push('--cookies-from-browser', config.youtube_cookies_from_browser);
-        } else {
-            const cookiePath = path.join(__dirname, 'cookies.txt');
-            if (fs.existsSync(cookiePath)) {
-                args.push('--cookies', cookiePath);
+function handleTrackEnd() {
+    if (loopStatus === 'song') {
+        playSong(null);
+    } else if (loopStatus === 'queue') {
+        const currentSong = queue.shift();
+        if (currentSong) {
+            if (currentSong.source === 'spotify') {
+                currentSong.url = null;
+                currentSong.lavalinkTrack = null;
             }
+            queue.push(currentSong);
         }
-        
-        args.push(videoUrl);
-
-        execFile(ytdlpPath, args, (error, stdout, stderr) => {
-            if (error) {
-                return reject(error);
-            }
-            try {
-                const info = JSON.parse(stdout);
-                resolve({
-                    title: info.title || info.fulltitle || 'YouTube Stream',
-                    streamUrl: info.url,
-                    duration: info.duration || 0
-                });
-            } catch (e) {
-                reject(new Error('Failed to parse yt-dlp output'));
-            }
-        });
-    });
+        playSong(null);
+    } else {
+        queue.shift();
+        playSong(null);
+    }
 }
 
-// Helper to extract playlist items using yt-dlp.exe
-function getYoutubePlaylistVideos(playlistUrl) {
-    return new Promise((resolve, reject) => {
-        const ytdlpPath = process.platform === 'android' ? 'yt-dlp' : path.join(__dirname, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-        const args = ['--flat-playlist', '--dump-json'];
-        
-        if (config.youtube_cookies_from_browser) {
-            args.push('--cookies-from-browser', config.youtube_cookies_from_browser);
-        } else {
-            const cookiePath = path.join(__dirname, 'cookies.txt');
-            if (fs.existsSync(cookiePath)) {
-                args.push('--cookies', cookiePath);
+function handlePlaybackError(error) {
+    console.error(`Lavalink playback error: ${error.message || error}`);
+    if (loopStatus === 'queue') {
+        const currentSong = queue.shift();
+        if (currentSong) {
+            if (currentSong.source === 'spotify') {
+                currentSong.url = null;
+                currentSong.lavalinkTrack = null;
             }
+            queue.push(currentSong);
         }
-        
-        args.push(playlistUrl);
+        playSong(null);
+    } else {
+        queue.shift();
+        playSong(null);
+    }
+}
 
-        // Increased maxBuffer to 10MB to support large playlists without buffer overflow
-        execFile(ytdlpPath, args, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-            if (error) {
-                return reject(error);
-            }
-            try {
-                const lines = stdout.trim().split('\n');
-                const videos = [];
-                for (const line of lines) {
-                    if (!line.trim()) continue;
-                    const info = JSON.parse(line);
-                    videos.push({
-                        title: info.title || 'YouTube Playlist Video',
-                        url: info.url || `https://www.youtube.com/watch?v=${info.id}`,
-                        id: info.id
-                    });
-                }
-                resolve(videos);
-            } catch (e) {
-                reject(new Error('Failed to parse yt-dlp playlist output'));
-            }
-        });
-    });
+function cleanupPlayerState() {
+    shoukakuPlayer = null;
+    queue = [];
+    loopStatus = 'none';
 }
 
 // Helper to automatically find target voice channel
 async function getTargetVoiceChannel(message = null, targetOwnerId = null) {
-    // 1. If command is from Discord, try to get the sender's voice channel
     if (message && message.member?.voice?.channel) {
         return message.member.voice.channel;
     }
     
-    // 2. Otherwise, check all guilds to find if any owner is in a voice channel
     const ownerIds = targetOwnerId && targetOwnerId !== 'auto'
         ? [targetOwnerId]
         : (config.owner_ids || []);
@@ -328,43 +224,117 @@ async function getTargetVoiceChannel(message = null, targetOwnerId = null) {
     return null;
 }
 
-// Unified helper to connect to a voice channel and set up stateChange listener
-function connectToVoiceChannel(channel) {
-    if (voiceConnection) {
-        voiceConnection.destroy();
-        voiceConnection = null;
+// Unified helper to connect to a voice channel via Shoukaku
+async function connectToVoiceChannel(channel) {
+    if (shoukakuPlayer) {
+        // If already connected to the same channel, do nothing
+        if (shoukakuPlayer.channelId === channel.id) return shoukakuPlayer;
+
+        // Save current state before leaving to prevent losing active queue/volume settings
+        const oldGuildId = shoukakuPlayer.guildId;
+        const savedQueue = [...queue];
+        const savedLoop = loopStatus;
+        const savedVolume = currentVolume;
+
+        cleanupPlayerState();
+        await shoukaku.leaveVoiceChannel(oldGuildId).catch(() => {});
+
+        queue = savedQueue;
+        loopStatus = savedLoop;
+        currentVolume = savedVolume;
     }
 
-    voiceConnection = joinVoiceChannel({
-        channelId: channel.id,
+    const player = await shoukaku.joinVoiceChannel({
         guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
+        channelId: channel.id,
+        shardId: 0
     });
 
-    voiceConnection.on('stateChange', (oldState, newState) => {
-        if (newState.status === VoiceConnectionStatus.Disconnected) {
-            if (voiceConnection) {
-                voiceConnection.destroy();
-                voiceConnection = null;
-                audioPlayer = null;
-                currentResource = null;
-                queue = [];
-                loopStatus = 'none';
-                if (currentChildProcess) {
-                    currentChildProcess.kill();
-                    currentChildProcess = null;
-                }
-                console.log('\n\x1b[33m[Voice Info] Disconnected from voice channel.\x1b[0m');
-            }
+    shoukakuPlayer = player;
+
+    player.on('start', (track) => {
+        if (shoukakuPlayer !== player) return;
+        console.log(`[Lavalink Player] Started playing: ${track.track}`);
+    });
+
+    player.on('end', (data) => {
+        if (shoukakuPlayer !== player) return;
+        if (data.reason === 'REPLACED') return;
+        console.log(`[Lavalink Player] Track ended. Reason: ${data.reason}`);
+        handleTrackEnd();
+    });
+
+    player.on('exception', (error) => {
+        if (shoukakuPlayer !== player) return;
+        console.error('[Lavalink Player] Exception:', error);
+        handlePlaybackError(error);
+    });
+
+    player.on('closed', (data) => {
+        console.warn('[Lavalink Player] Connection closed:', data);
+        if (shoukakuPlayer === player) {
+            cleanupPlayerState();
         }
     });
 
-    return voiceConnection;
+    return player;
+}
+
+// Spotify Embed Scraper helper for premium tokenless resolution
+async function fetchSpotifyEmbedTracks(url) {
+    const embedUrl = url.replace(/open\.spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/, 'open.spotify.com/embed/$1/$2');
+    const response = await fetch(embedUrl, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Failed to fetch Spotify embed page: ${response.statusText}`);
+    }
+
+    const html = await response.text();
+    const regex = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
+    const match = html.match(regex);
+    if (!match) {
+        throw new Error('Could not find Spotify Next.js hydration data.');
+    }
+
+    const nextData = JSON.parse(match[1]);
+    const pageProps = nextData.props?.pageProps;
+    
+    // Check if the link is not found or private (returns 404 or Page not found)
+    if (pageProps?.status === 404 || pageProps?.title === 'Page not found') {
+        throw new Error('The Spotify link is invalid, or the playlist/album is PRIVATE. Please make sure your playlist is set to PUBLIC.');
+    }
+
+    const entity = pageProps?.state?.data?.entity;
+    if (!entity) {
+        throw new Error('Spotify metadata not found. Make sure the link is valid and public.');
+    }
+
+    let tracks = [];
+    if (entity.type === 'track') {
+        const title = entity.title || entity.name;
+        const artists = entity.subtitle || '';
+        tracks = [{ title, artists }];
+    } else if (entity.type === 'playlist' || entity.type === 'album') {
+        const items = entity.trackList || [];
+        tracks = items.map(item => ({
+            title: item.title,
+            artists: item.subtitle || ''
+        }));
+    }
+    return tracks;
 }
 
 // Resolve query helper
 async function resolveSong(query) {
-    // Helper to sanitize URL for play-dl (ensures www. is present for youtube.com links)
+    const node = shoukaku.options.nodeResolver(shoukaku.nodes);
+    if (!node) {
+        throw new Error('No active Lavalink nodes found to resolve tracks.');
+    }
+
     const sanitizeUrl = (url) => {
         if (url && /youtube\.com/i.test(url) && !/www\.youtube\.com/i.test(url)) {
             return url.replace(/youtube\.com/i, 'www.youtube.com');
@@ -372,175 +342,83 @@ async function resolveSong(query) {
         return url;
     };
 
-    // Spotify Track
-    if (play.sp_validate(query) === 'track') {
+    // Spotify Track, Playlist or Album
+    const isSpotify = /open\.spotify\.com\/(track|playlist|album)\/([a-zA-Z0-9]+)/.test(query);
+    if (isSpotify) {
         try {
-            if (!config.spotify_client_id || !config.spotify_client_secret) {
-                throw new Error(
-                    'Spotify Client ID/Secret are not configured in config.json.\n\n' +
-                    '>>> ╭━━━ **Spotify Setup Guide** ━━━╮\n' +
-                    '1. Go to: **https://developer.spotify.com/dashboard**\n' +
-                    '2. Create an App to get your Client ID & Secret.\n' +
-                    '3. Add "spotify_client_id" and "spotify_client_secret" to config.json.\n' +
-                    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯'
-                );
+            const tracks = await fetchSpotifyEmbedTracks(query);
+            if (tracks.length === 0) {
+                throw new Error('Spotify track/playlist/album is empty or has no accessible tracks.');
             }
-            
-            const spotifyData = await play.spotify(query);
-            const searchKeyword = `${spotifyData.name} ${spotifyData.artists.map(a => a.name).join(' ')}`;
-            const ytInfo = await yts(searchKeyword);
-            if (ytInfo && ytInfo.videos && ytInfo.videos.length > 0) {
-                const videoUrl = sanitizeUrl(ytInfo.videos[0].url);
-                try {
-                    const directInfo = await getYoutubeInfo(videoUrl);
-                    return [{
-                        title: `${spotifyData.name} - ${spotifyData.artists.map(a => a.name).join(', ')}`,
-                        url: directInfo.streamUrl,
-                        originalUrl: videoUrl,
-                        query: query,
-                        source: 'youtube'
-                    }];
-                } catch (e) {
-                    return [{
-                        title: `${spotifyData.name} - ${spotifyData.artists.map(a => a.name).join(', ')}`,
-                        url: videoUrl,
-                        originalUrl: videoUrl,
-                        query: query,
-                        source: 'youtube'
-                    }];
-                }
-            } else {
-                throw new Error('Could not find matching video on YouTube.');
-            }
+            return tracks.map(track => {
+                const title = track.artists ? `${track.title} - ${track.artists}` : track.title;
+                return {
+                    title: title,
+                    url: null,
+                    query: query,
+                    source: 'spotify',
+                    searchKeyword: track.artists ? `${track.title} ${track.artists}` : track.title
+                };
+            });
         } catch (err) {
             throw new Error(`Spotify resolution failed: ${err.message}`);
         }
     }
-    
-    // Spotify Playlist or Album
-    if (play.sp_validate(query) === 'playlist' || play.sp_validate(query) === 'album') {
-        try {
-            if (!config.spotify_client_id || !config.spotify_client_secret) {
-                throw new Error(
-                    'Spotify Client ID/Secret are not configured in config.json.\n\n' +
-                    '>>> ╭━━━ **Spotify Setup Guide** ━━━╮\n' +
-                    '1. Go to: **https://developer.spotify.com/dashboard**\n' +
-                    '2. Create an App to get your Client ID & Secret.\n' +
-                    '3. Add "spotify_client_id" and "spotify_client_secret" to config.json.\n' +
-                    '╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯'
-                );
-            }
-            
-            const spotifyData = await play.spotify(query);
-            const tracks = await spotifyData.all_tracks();
-            
-            if (!tracks || tracks.length === 0) {
-                throw new Error('Spotify playlist/album is empty or has no accessible tracks.');
-            }
-            
-            return tracks.map(track => {
-                const artistsStr = track.artists.map(a => a.name).join(', ');
-                const title = `${track.name} - ${artistsStr}`;
-                return {
-                    title: title,
-                    url: null, // resolved dynamically in playSong
-                    originalUrl: null,
-                    query: query,
-                    source: 'spotify',
-                    searchKeyword: `${track.name} ${artistsStr}`
-                };
-            });
-        } catch (err) {
-            throw new Error(`Spotify playlist resolution failed: ${err.message}`);
-        }
-    }
 
-    // YouTube Playlist
-    const isYoutubePlaylist = play.yt_validate(query) === 'playlist' || (query.includes('list=') && (query.includes('youtube.com') || query.includes('youtu.be')));
-    if (isYoutubePlaylist) {
-        try {
-            const playlistUrl = sanitizeUrl(query);
-            let playlistVideos = [];
-            try {
-                playlistVideos = await getYoutubePlaylistVideos(playlistUrl);
-            } catch (ytdlErr) {
-                console.warn('\x1b[33m[Warning] yt-dlp playlist fetch failed, falling back to play-dl:\x1b[0m', ytdlErr.message);
-                const playlistInfo = await play.playlist_info(playlistUrl);
-                const allVideos = await playlistInfo.all_videos();
-                playlistVideos = allVideos.map(video => ({
-                    title: video.title,
-                    url: video.url || `https://www.youtube.com/watch?v=${video.id}`,
-                    id: video.id
-                }));
-            }
+    // Default resolution for direct URL or search queries
+    const isUrl = query.startsWith('http://') || query.startsWith('https://');
+    const searchPrefix = isUrl ? '' : 'ytsearch:';
+    const resolveQuery = isUrl ? sanitizeUrl(query) : `${searchPrefix}${query}`;
 
-            if (!playlistVideos || playlistVideos.length === 0) {
-                throw new Error('YouTube playlist is empty or could not be fetched.');
-            }
-            return playlistVideos.map(video => ({
-                title: video.title,
-                url: video.url,
-                originalUrl: video.url,
-                query: query,
-                source: 'youtube'
-            }));
-        } catch (err) {
-            throw new Error(`YouTube playlist resolution failed: ${err.message}`);
-        }
-    }
+    let result = await node.rest.resolve(resolveQuery);
 
-    // YouTube Video URL
-    if (play.yt_validate(query) === 'video') {
-        const videoUrl = sanitizeUrl(query);
-        try {
-            const ytInfo = await getYoutubeInfo(videoUrl);
-            return [{
-                title: ytInfo.title,
-                url: ytInfo.streamUrl,
-                originalUrl: videoUrl,
-                query: query,
-                source: 'youtube'
-            }];
-        } catch (err) {
-            return [{
-                title: 'YouTube Stream',
-                url: videoUrl,
-                originalUrl: videoUrl,
-                query: query,
-                source: 'youtube'
-            }];
-        }
-    }
-
-    // Search Query
-    try {
-        const ytInfo = await yts(query);
-        if (ytInfo && ytInfo.videos && ytInfo.videos.length > 0) {
-            const videoUrl = sanitizeUrl(ytInfo.videos[0].url);
-            try {
-                const directInfo = await getYoutubeInfo(videoUrl);
+    if (result.loadType === 'empty' || result.loadType === 'error' || !result.data) {
+        if (!isUrl && searchPrefix === 'ytsearch:') {
+            const scResult = await node.rest.resolve(`scsearch:${query}`);
+            if (scResult.loadType !== 'empty' && scResult.loadType !== 'error' && scResult.data?.length > 0) {
+                const track = scResult.data[0];
                 return [{
-                    title: directInfo.title,
-                    url: directInfo.streamUrl,
-                    originalUrl: videoUrl,
-                    query: query,
-                    source: 'youtube'
-                }];
-            } catch (e) {
-                return [{
-                    title: ytInfo.videos[0].title,
-                    url: videoUrl,
-                    originalUrl: videoUrl,
-                    query: query,
-                    source: 'youtube'
+                    title: track.info.title,
+                    url: track.info.uri,
+                    source: 'soundcloud',
+                    lavalinkTrack: track.encoded
                 }];
             }
-        } else {
-            throw new Error('No results found on YouTube.');
         }
-    } catch (err) {
-        throw new Error(`Search failed: ${err.message}`);
+        throw new Error(result.exception?.message || 'No matches found on Lavalink.');
     }
+
+    if (result.loadType === 'track') {
+        const track = result.data;
+        return [{
+            title: track.info.title,
+            url: track.info.uri,
+            source: 'youtube',
+            lavalinkTrack: track.encoded
+        }];
+    }
+
+    if (result.loadType === 'playlist') {
+        const tracks = result.data.tracks || [];
+        return tracks.map(track => ({
+            title: track.info.title,
+            url: track.info.uri,
+            source: 'youtube',
+            lavalinkTrack: track.encoded
+        }));
+    }
+
+    if (result.loadType === 'search') {
+        const track = result.data[0];
+        return [{
+            title: track.info.title,
+            url: track.info.uri,
+            source: 'youtube',
+            lavalinkTrack: track.encoded
+        }];
+    }
+
+    throw new Error('Unsupported search result loadType.');
 }
 
 // Helper to send a message that deletes itself after a delay to prevent spam
@@ -558,6 +436,18 @@ function sendTempResponse(channel, content, delay = 10000) {
 // Helper to spawn yt-dlp.exe and return its stdout stream
 function getYoutubeStream(videoUrl) {
     const ytdlpPath = process.platform === 'android' ? 'yt-dlp' : path.join(__dirname, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+    
+    // Automatically make yt-dlp binary executable on non-Windows platforms (e.g. Linux VPS/Docker)
+    if (process.platform !== 'win32' && process.platform !== 'android') {
+        try {
+            if (fs.existsSync(ytdlpPath)) {
+                fs.chmodSync(ytdlpPath, '755');
+            }
+        } catch (chmodErr) {
+            console.warn(`[Warning] Could not set execute permission on yt-dlp binary: ${chmodErr.message}`);
+        }
+    }
+
     const args = [
         '--no-progress',
         '-f', 'bestaudio',
@@ -596,319 +486,83 @@ function getYoutubeStream(videoUrl) {
 }
 
 // Play song helper
-function playSong(textChannel) {
+async function playSong(textChannel) {
     if (queue.length === 0) {
-        if (currentChildProcess) {
-            currentChildProcess.kill();
-            currentChildProcess = null;
-        }
-        if (voiceConnection) {
-            voiceConnection.destroy();
-            voiceConnection = null;
-            audioPlayer = null;
-            currentResource = null;
-        }
         if (textChannel) {
-            sendTempResponse(textChannel, '🎶 **Queue is empty. Disconnected from voice channel.**', 8000);
+            sendTempResponse(textChannel, '🎶 **Queue is empty. Bot will stay in the voice channel.**', 8000);
         }
         return;
     }
 
     const song = queue[0];
 
-    // Helper to run play logic once song has a stream URL
-    const playStream = () => {
-        if (!audioPlayer) {
-            audioPlayer = createAudioPlayer();
-            if (voiceConnection) {
-                voiceConnection.subscribe(audioPlayer);
+    // Spotify resolution dynamic logic
+    if (song.source === 'spotify' && !song.lavalinkTrack) {
+        if (textChannel) {
+            sendTempResponse(textChannel, `🔍 **Searching YouTube for Spotify track:** \`${song.title}\`...`, 5000);
+        }
+
+        try {
+            const node = shoukaku.options.nodeResolver(shoukaku.nodes);
+            if (!node) throw new Error('No active Lavalink node.');
+            
+            const searchKeyword = song.searchKeyword || song.title;
+            const result = await node.rest.resolve(`ytsearch:${searchKeyword}`);
+            
+            if (result.loadType === 'search' && result.data.length > 0) {
+                const track = result.data[0];
+                song.lavalinkTrack = track.encoded;
+                song.url = track.info.uri;
+            } else {
+                const scResult = await node.rest.resolve(`scsearch:${searchKeyword}`);
+                if (scResult.loadType === 'search' && scResult.data.length > 0) {
+                    const track = scResult.data[0];
+                    song.lavalinkTrack = track.encoded;
+                    song.url = track.info.uri;
+                } else {
+                    throw new Error('Not found on YouTube or SoundCloud.');
+                }
             }
+        } catch (err) {
+            console.error(`Dynamic Spotify resolution failed for ${song.title}:`, err.message);
+            if (textChannel) {
+                sendTempResponse(textChannel, `❌ **Failed to resolve Spotify track:** \`${song.title}\``, 8000);
+            }
+            queue.shift();
+            playSong(textChannel);
+            return;
+        }
+    }
 
-            audioPlayer.on(AudioPlayerStatus.Idle, () => {
-                if (currentChildProcess) {
-                    currentChildProcess.kill();
-                    currentChildProcess = null;
-                }
-                if (loopStatus === 'song') {
-                    playSong(textChannel);
-                } else if (loopStatus === 'queue') {
-                    const currentSong = queue.shift();
-                    if (currentSong) {
-                        if (currentSong.originalUrl === null && currentSong.source === 'youtube') {
-                            currentSong.source = 'spotify';
-                            currentSong.url = null;
-                        }
-                        queue.push(currentSong);
-                    }
-                    playSong(textChannel);
-                } else {
-                    queue.shift();
-                    playSong(textChannel);
-                }
-            });
-
-            audioPlayer.on('error', error => {
-                console.error(`AudioPlayer error: ${error.message}`);
-                if (currentChildProcess) {
-                    currentChildProcess.kill();
-                    currentChildProcess = null;
-                }
-                if (queue.length === 0 || queue[0] !== song) return;
+    // Now play the resolved track on the player
+    try {
+        if (!shoukakuPlayer) {
+            const voiceChannel = await getTargetVoiceChannel();
+            if (!voiceChannel) {
                 if (textChannel) {
-                    sendTempResponse(textChannel, `❌ **Playback error:** ${error.message}`, 8000);
+                    sendTempResponse(textChannel, '❌ **You must be in a voice channel or an owner must be in a voice channel!**', 8000);
                 }
-                if (loopStatus === 'queue') {
-                    const currentSong = queue.shift();
-                    if (currentSong) {
-                        if (currentSong.originalUrl === null && currentSong.source === 'youtube') {
-                            currentSong.source = 'spotify';
-                            currentSong.url = null;
-                        }
-                        queue.push(currentSong);
-                    }
-                    playSong(textChannel);
-                } else {
-                    queue.shift();
-                    playSong(textChannel);
-                }
-            });
+                queue = [];
+                return;
+            }
+            await connectToVoiceChannel(voiceChannel);
         }
 
         if (textChannel) {
             sendTempResponse(textChannel, `🎶 **Now playing:** \`${song.title}\``, 10000);
         }
 
-        const runSoundCloudFallback = async (originalErr) => {
-            if (currentChildProcess) {
-                currentChildProcess.kill();
-                currentChildProcess = null;
-            }
-            if (queue.length === 0 || queue[0] !== song) return;
-            
-            const isYoutubeUrl = /youtube\.com|youtu\.be/i.test(song.url) || (song.originalUrl && /youtube\.com/i.test(song.originalUrl));
-            // Fallback to SoundCloud if YouTube streaming fails
-            if (isYoutubeUrl) {
-                if (textChannel) {
-                    sendTempResponse(textChannel, `⚠️ **YouTube stream blocked. Trying SoundCloud fallback for:** \`${song.title}\`...`, 5000);
-                }
-                try {
-                    // Determine best search query (use original query if it was not a URL, otherwise use clean title)
-                    let searchQuery = cleanTitleForSearch(song.title);
-                    if (song.query && !song.query.startsWith('http')) {
-                        searchQuery = song.query;
-                    }
-                    
-                    console.log(`Attempting SoundCloud fallback for: "${searchQuery}" (derived from: "${song.title}")`);
-                    const scResults = await play.search(searchQuery, { source: { soundcloud: 'tracks' }, limit: 1 });
-                    if (scResults && scResults.length > 0) {
-                        const scStream = await play.stream(scResults[0].url);
-
-                        const resource = createAudioResource(scStream.stream, {
-                            inputType: scStream.type,
-                            inlineVolume: true
-                        });
-                        if (resource.volume) {
-                            resource.volume.setVolume(currentVolume);
-                        }
-                        currentResource = resource;
-                        audioPlayer.play(resource);
-                        if (textChannel) {
-                            sendTempResponse(textChannel, `🎶 **Now playing (SoundCloud):** \`${scResults[0].name}\``, 10000);
-                        }
-                        return; // Successfully played fallback!
-                    }
-                } catch (scErr) {
-                    console.error(`SoundCloud fallback failed: ${scErr.message}`);
-                }
-            }
-
-            if (textChannel) {
-                sendTempResponse(textChannel, `❌ **Failed to stream song:** ${originalErr.message}`, 8000);
-            }
-            queue.shift();
-            playSong(textChannel);
-        };
-
-        const isYoutubeUrl = /youtube\.com|youtu\.be/i.test(song.url) || (song.originalUrl && /youtube\.com|youtu\.be/i.test(song.originalUrl)) || /googlevideo\.com/i.test(song.url);
-
-        if (isYoutubeUrl) {
-            if (currentChildProcess) {
-                currentChildProcess.kill();
-                currentChildProcess = null;
-            }
-
-            try {
-                const ytUrl = song.originalUrl || song.url;
-                const child = getYoutubeStream(ytUrl);
-                currentChildProcess = child;
-
-                const resource = createAudioResource(child.stdout, {
-                    inputType: StreamType.Arbitrary,
-                    inlineVolume: true
-                });
-                if (resource.volume) {
-                    resource.volume.setVolume(currentVolume);
-                }
-                currentResource = resource;
-                audioPlayer.play(resource);
-            } catch (err) {
-                console.error(`yt-dlp spawning error for ${song.title}: ${err.message}`);
-                runSoundCloudFallback(err);
-            }
-        } else {
-            if (currentChildProcess) {
-                currentChildProcess.kill();
-                currentChildProcess = null;
-            }
-
-            // Non-YouTube streams (SoundCloud, etc.)
-            play.stream(song.url)
-                .then(stream => {
-                    const resource = createAudioResource(stream.stream, {
-                        inputType: stream.type,
-                        inlineVolume: true
-                    });
-                    if (resource.volume) {
-                        resource.volume.setVolume(currentVolume);
-                    }
-                    currentResource = resource;
-                    audioPlayer.play(resource);
-                })
-                .catch(async err => {
-                    console.error(`play-dl stream error for ${song.title}: ${err.message}`);
-                    await runSoundCloudFallback(err);
-                });
+        if (shoukakuPlayer) {
+            await shoukakuPlayer.playTrack({ track: { encoded: song.lavalinkTrack } });
+            await shoukakuPlayer.setGlobalVolume(Math.round(currentVolume * 100));
         }
-    };
-
-    // Spotify resolution dynamic logic
-    if (song.source === 'spotify' && !song.url) {
-        const sanitizeUrl = (url) => {
-            if (url && /youtube\.com/i.test(url) && !/www\.youtube\.com/i.test(url)) {
-                return url.replace(/youtube\.com/i, 'www.youtube.com');
-            }
-            return url;
-        };
-
+    } catch (err) {
+        console.error(`Lavalink playTrack error:`, err);
         if (textChannel) {
-            sendTempResponse(textChannel, `🔍 **Searching YouTube for Spotify track:** \`${song.title}\`...`, 5000);
+            sendTempResponse(textChannel, `❌ **Failed to stream song:** ${err.message}`, 8000);
         }
-
-        yts(song.searchKeyword || song.title)
-            .then(async (ytInfo) => {
-                if (queue.length === 0 || queue[0] !== song) return; // queue state changed
-                if (ytInfo && ytInfo.videos && ytInfo.videos.length > 0) {
-                    const videoUrl = sanitizeUrl(ytInfo.videos[0].url);
-                    try {
-                        const directInfo = await getYoutubeInfo(videoUrl);
-                        song.url = directInfo.streamUrl;
-                        song.originalUrl = videoUrl;
-                    } catch (e) {
-                        song.url = videoUrl;
-                        song.originalUrl = videoUrl;
-                    }
-                    song.source = 'youtube';
-                    playStream();
-                } else {
-                    throw new Error('No search results found on YouTube.');
-                }
-            })
-            .catch(async (err) => {
-                if (queue.length === 0 || queue[0] !== song) return; // queue state changed
-                console.error(`Dynamic Spotify resolution failed for ${song.title}:`, err.message);
-                
-                // Fallback to SoundCloud search directly
-                if (textChannel) {
-                    sendTempResponse(textChannel, `⚠️ **YouTube search failed for Spotify track. Trying SoundCloud...**`, 5000);
-                }
-                try {
-                    const scResults = await play.search(song.title, { source: { soundcloud: 'tracks' }, limit: 1 });
-                    if (scResults && scResults.length > 0) {
-                        const scStream = await play.stream(scResults[0].url);
-
-                        if (!audioPlayer) {
-                            audioPlayer = createAudioPlayer();
-                            if (voiceConnection) {
-                                voiceConnection.subscribe(audioPlayer);
-                            }
-                            
-                            audioPlayer.on(AudioPlayerStatus.Idle, () => {
-                                if (currentChildProcess) {
-                                    currentChildProcess.kill();
-                                    currentChildProcess = null;
-                                }
-                                if (loopStatus === 'song') {
-                                    playSong(textChannel);
-                                } else if (loopStatus === 'queue') {
-                                    const currentSong = queue.shift();
-                                    if (currentSong) {
-                                        if (currentSong.originalUrl === null && currentSong.source === 'youtube') {
-                                            currentSong.source = 'spotify';
-                                            currentSong.url = null;
-                                        }
-                                        queue.push(currentSong);
-                                    }
-                                    playSong(textChannel);
-                                } else {
-                                    queue.shift();
-                                    playSong(textChannel);
-                                }
-                            });
-
-                            audioPlayer.on('error', error => {
-                                console.error(`AudioPlayer error: ${error.message}`);
-                                if (currentChildProcess) {
-                                    currentChildProcess.kill();
-                                    currentChildProcess = null;
-                                }
-                                if (queue.length === 0 || queue[0] !== song) return;
-                                if (textChannel) {
-                                    sendTempResponse(textChannel, `❌ **Playback error:** ${error.message}`, 8000);
-                                }
-                                if (loopStatus === 'queue') {
-                                    const currentSong = queue.shift();
-                                    if (currentSong) {
-                                        if (currentSong.originalUrl === null && currentSong.source === 'youtube') {
-                                            currentSong.source = 'spotify';
-                                            currentSong.url = null;
-                                        }
-                                        queue.push(currentSong);
-                                    }
-                                    playSong(textChannel);
-                                } else {
-                                    queue.shift();
-                                    playSong(textChannel);
-                                }
-                            });
-                        }
-
-                        if (textChannel) {
-                            sendTempResponse(textChannel, `🎶 **Now playing (SoundCloud):** \`${scResults[0].name}\``, 10000);
-                        }
-
-                        const resource = createAudioResource(scStream.stream, {
-                            inputType: scStream.type,
-                            inlineVolume: true
-                        });
-                        if (resource.volume) {
-                            resource.volume.setVolume(currentVolume);
-                        }
-                        currentResource = resource;
-                        audioPlayer.play(resource);
-                        return;
-                    }
-                } catch (scErr) {
-                    console.error(`SoundCloud fallback failed: ${scErr.message}`);
-                }
-
-                if (textChannel) {
-                    sendTempResponse(textChannel, `❌ **Failed to resolve Spotify track:** \`${song.title}\``, 8000);
-                }
-                queue.shift();
-                playSong(textChannel);
-            });
-    } else {
-        playStream();
+        queue.shift();
+        playSong(textChannel);
     }
 }
 
@@ -942,6 +596,42 @@ async function sendResponse(originalMsg, content, deleteDelay = 15000) {
     return responseMsg;
 }
 
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    const botId = client.user?.id;
+    if (!botId) return;
+
+    // Handle bot being disconnected or moved by a moderator/server
+    if (oldState.id === botId) {
+        if (oldState.channelId && !newState.channelId) {
+            console.log(`[Voice State] Bot was disconnected from channel in guild: ${oldState.guild.name}`);
+            cleanupPlayerState();
+        }
+        return;
+    }
+
+    // Find if the bot is in a voice channel in this guild
+    const botVoiceState = oldState.guild.voiceStates.cache.get(botId);
+    if (!botVoiceState || !botVoiceState.channelId) return;
+
+    const botChannelId = botVoiceState.channelId;
+
+    // Check if a member left the bot's voice channel
+    /* 
+    if (oldState.channelId === botChannelId && newState.channelId !== botChannelId) {
+        const channel = oldState.guild.channels.cache.get(botChannelId);
+        if (channel) {
+            // Check members in the channel (excluding bots and the bot's own selfbot user account)
+            const humanMembers = channel.members.filter(m => !m.user.bot && m.id !== botId);
+            if (humanMembers.size === 0) {
+                console.log(`[Voice State] Voice channel "${channel.name}" in guild "${oldState.guild.name}" has no more human users. Leaving channel...`);
+                cleanupPlayerState();
+                await shoukaku.leaveVoiceChannel(oldState.guild.id).catch(() => {});
+            }
+        }
+    }
+    */
+});
+
 client.on('ready', () => {
     console.log('\n\x1b[36m==================================================\x1b[0m');
     console.log(`\x1b[32m[Success] logged in as: ${client.user.tag}\x1b[0m`);
@@ -950,7 +640,6 @@ client.on('ready', () => {
     console.log('\x1b[36m==================================================\n\x1b[0m');
     
     startConsoleListener();
-    startWebServer();
 });
 
 client.on('messageCreate', async (message) => {
@@ -1111,14 +800,14 @@ ${desc}
 
         try {
             const songs = await resolveSong(query);
-            
-            if (!voiceConnection) {
-                connectToVoiceChannel(voiceChannel);
-            }
+            const wasPlaying = queue.length > 0;
+            const channelChanged = shoukakuPlayer && shoukakuPlayer.channelId !== voiceChannel.id;
+
+            await connectToVoiceChannel(voiceChannel);
 
             queue.push(...songs);
 
-            if (queue.length === songs.length) {
+            if (queue.length === songs.length || (channelChanged && wasPlaying)) {
                 if (searchStatusMsg && searchStatusMsg.deletable) {
                     await searchStatusMsg.delete().catch(() => {});
                 }
@@ -1145,55 +834,43 @@ ${desc}
 
     // Skip Command
     if (command === 'skip') {
-        if (!voiceConnection || !audioPlayer) {
+        if (!shoukakuPlayer) {
             return sendResponse(message, '❌ **No music is currently playing!**');
         }
         await sendResponse(message, '⏭️ **Skipping current song...**');
-        if (currentChildProcess) {
-            currentChildProcess.kill();
-            currentChildProcess = null;
-        }
-        audioPlayer.stop();
+        await shoukakuPlayer.stopTrack();
     }
 
 
-    // Stop Command
-    if (command === 'stop') {
-        if (!voiceConnection) {
+    // Stop / Leave Command
+    if (command === 'stop' || command === 'leave') {
+        const voiceState = message.guild?.voiceStates.cache.get(client.user.id);
+        const isInVC = voiceState && voiceState.channelId;
+
+        if (!shoukakuPlayer && !isInVC) {
             return sendResponse(message, '❌ **Bot is not in a voice channel!**');
         }
         await sendResponse(message, '🛑 **Stopping music and leaving voice channel...**');
-        queue = [];
-        if (currentChildProcess) {
-            currentChildProcess.kill();
-            currentChildProcess = null;
-        }
-        if (audioPlayer) {
-            audioPlayer.stop();
-        }
-        if (voiceConnection) {
-            voiceConnection.destroy();
-            voiceConnection = null;
-            audioPlayer = null;
-            currentResource = null;
-        }
+        const guildId = message.guild.id;
+        cleanupPlayerState();
+        await shoukaku.leaveVoiceChannel(guildId).catch(() => {});
     }
 
     // Pause Command
     if (command === 'pause') {
-        if (!audioPlayer || audioPlayer.state.status === AudioPlayerStatus.Paused) {
+        if (!shoukakuPlayer || shoukakuPlayer.paused) {
             return sendResponse(message, '❌ **Music is already paused or not playing!**');
         }
-        audioPlayer.pause();
+        await shoukakuPlayer.setPaused(true);
         await sendResponse(message, '⏸️ **Music paused.**');
     }
 
     // Resume Command
     if (command === 'resume') {
-        if (!audioPlayer || audioPlayer.state.status !== AudioPlayerStatus.Paused) {
+        if (!shoukakuPlayer || !shoukakuPlayer.paused) {
             return sendResponse(message, '❌ **Music is not paused!**');
         }
-        audioPlayer.unpause();
+        await shoukakuPlayer.setPaused(false);
         await sendResponse(message, '▶️ **Music resumed.**');
     }
 
@@ -1285,8 +962,8 @@ ${desc}
             return sendResponse(message, `❌ **Invalid volume!** Specify a number between \`0\` and \`200\`.`);
         }
         currentVolume = parsed / 100;
-        if (currentResource && currentResource.volume) {
-            currentResource.volume.setVolume(currentVolume);
+        if (shoukakuPlayer) {
+            await shoukakuPlayer.setGlobalVolume(parsed);
         }
         await sendResponse(message, `🔊 **Volume updated to:** \`${parsed}%\``);
     }
@@ -1342,17 +1019,25 @@ function startConsoleListener() {
             if (!query) {
                 console.log('\x1b[31m[Console Error] Usage: play <song name or url>\x1b[0m');
             } else {
-                if (!voiceConnection) {
-                    const targetVc = await getTargetVoiceChannel(null);
-                    if (targetVc) {
-                        connectToVoiceChannel(targetVc);
-                        console.log(`\x1b[32m[Console Success] Auto-connected to Voice Channel: "${targetVc.name}"\x1b[0m`);
-                    } else {
-                        console.log('\x1b[31m[Console Error] Bot is not in a voice channel and no owner is in a voice channel. Use "join <channel_id>" first.\x1b[0m');
-                        rl.prompt();
-                        return;
-                    }
+                let targetVc = await getTargetVoiceChannel(null);
+                if (!targetVc && shoukakuPlayer) {
+                    targetVc = client.channels.cache.get(shoukakuPlayer.channelId);
                 }
+
+                if (!targetVc) {
+                    console.log('\x1b[31m[Console Error] Bot is not in a voice channel and no owner is in a voice channel. Use "join <channel_id>" first.\x1b[0m');
+                    rl.prompt();
+                    return;
+                }
+
+                const wasPlaying = queue.length > 0;
+                const channelChanged = shoukakuPlayer && shoukakuPlayer.channelId !== targetVc.id;
+
+                await connectToVoiceChannel(targetVc);
+                if (channelChanged) {
+                    console.log(`\x1b[32m[Console Success] Reconnected/Moved to Voice Channel: "${targetVc.name}"\x1b[0m`);
+                }
+
                 console.log(`\x1b[36m[Console Info] Searching for "${query}"...\x1b[0m`);
                 try {
                     const songs = await resolveSong(query);
@@ -1362,7 +1047,7 @@ function startConsoleListener() {
                     } else {
                         console.log(`\x1b[32m[Console Success] Resolved and queued: ${songs[0].title}\x1b[0m`);
                     }
-                    if (queue.length === songs.length) {
+                    if (queue.length === songs.length || (channelChanged && wasPlaying)) {
                         playSong(null);
                     }
                 } catch (err) {
@@ -1371,51 +1056,46 @@ function startConsoleListener() {
             }
         } 
         else if (command === 'skip') {
-            if (!voiceConnection || !audioPlayer) {
+            if (!shoukakuPlayer) {
                 console.log('\x1b[31m[Console Error] No music is playing!\x1b[0m');
             } else {
                 console.log('⏭️ Skipping current song...');
-                if (currentChildProcess) {
-                    currentChildProcess.kill();
-                    currentChildProcess = null;
-                }
-                audioPlayer.stop();
+                await shoukakuPlayer.stopTrack();
             }
         } 
-        else if (command === 'stop') {
-            if (!voiceConnection) {
+        else if (command === 'stop' || command === 'leave') {
+            let connectedGuildId = shoukakuPlayer?.guildId;
+            if (!connectedGuildId) {
+                for (const guild of client.guilds.cache.values()) {
+                    const voiceState = guild.voiceStates.cache.get(client.user.id);
+                    if (voiceState && voiceState.channelId) {
+                        connectedGuildId = guild.id;
+                        break;
+                    }
+                }
+            }
+
+            if (!connectedGuildId) {
                 console.log('\x1b[31m[Console Error] Bot is not in a voice channel!\x1b[0m');
             } else {
                 console.log('🛑 Stopping music and leaving voice channel...');
-                queue = [];
-                if (currentChildProcess) {
-                    currentChildProcess.kill();
-                    currentChildProcess = null;
-                }
-                if (audioPlayer) {
-                    audioPlayer.stop();
-                }
-                if (voiceConnection) {
-                    voiceConnection.destroy();
-                    voiceConnection = null;
-                    audioPlayer = null;
-                    currentResource = null;
-                }
+                cleanupPlayerState();
+                await shoukaku.leaveVoiceChannel(connectedGuildId).catch(() => {});
             }
         } 
         else if (command === 'pause') {
-            if (!audioPlayer || audioPlayer.state.status === AudioPlayerStatus.Paused) {
+            if (!shoukakuPlayer || shoukakuPlayer.paused) {
                 console.log('\x1b[31m[Console Error] Music is already paused or not playing!\x1b[0m');
             } else {
-                audioPlayer.pause();
+                await shoukakuPlayer.setPaused(true);
                 console.log('⏸️ Music paused.');
             }
         } 
         else if (command === 'resume') {
-            if (!audioPlayer || audioPlayer.state.status !== AudioPlayerStatus.Paused) {
+            if (!shoukakuPlayer || !shoukakuPlayer.paused) {
                 console.log('\x1b[31m[Console Error] Music is not paused!\x1b[0m');
             } else {
-                audioPlayer.unpause();
+                await shoukakuPlayer.setPaused(false);
                 console.log('▶️ Music resumed.');
             }
         } 
@@ -1487,8 +1167,8 @@ function startConsoleListener() {
                     console.log('\x1b[31m[Console Error] Invalid volume! Specify a number between 0 and 200\x1b[0m');
                 } else {
                     currentVolume = parsed / 100;
-                    if (currentResource && currentResource.volume) {
-                        currentResource.volume.setVolume(currentVolume);
+                    if (shoukakuPlayer) {
+                        await shoukakuPlayer.setGlobalVolume(parsed);
                     }
                     console.log(`\x1b[32m[Console Success] Volume updated to: ${parsed}%\x1b[0m`);
                 }
@@ -1514,7 +1194,7 @@ async function joinConsoleVC(channelId) {
             return;
         }
 
-        connectToVoiceChannel(channel);
+        await connectToVoiceChannel(channel);
         console.log(`\x1b[32m[Console Success] Connected to VC: "${channel.name}" in Guild: "${channel.guild.name}"\x1b[0m`);
     } catch (err) {
         console.error(`\x1b[31m[Console Error] Failed to join voice channel: ${err.message}\x1b[0m`);
@@ -1524,18 +1204,73 @@ async function joinConsoleVC(channelId) {
 // Express server for Web Dashboard control panel
 const express = require('express');
 const webApp = express();
-const webPort = config.web_port || 3000;
+const webPort = process.env.PORT || process.env.SERVER_PORT || config.web_port || 3000;
 
 webApp.use(express.json());
+
+// Setup redirection middleware: if token is not configured or not logged in, redirect to settings page
+webApp.get('/', (req, res, next) => {
+    const isConfigured = config.token && config.token !== 'YOUR_DISCORD_USER_TOKEN';
+    if (!isConfigured || !client.user) {
+        return res.redirect('/settings.html');
+    }
+    next();
+});
+
 webApp.use(express.static(path.join(__dirname, 'public')));
+
+// Get config status API
+webApp.get('/api/config-status', (req, res) => {
+    res.json({
+        hasToken: !!(config.token && config.token !== 'YOUR_DISCORD_USER_TOKEN'),
+        loggedIn: !!client.user,
+        config: {
+            prefix: config.prefix || '>',
+            owner_ids: config.owner_ids || [],
+            web_port: config.web_port || 3000
+        }
+    });
+});
+
+// Post config save API
+webApp.post('/api/config', async (req, res) => {
+    const { token, ownerIds, prefix: newPrefix, webPort } = req.body;
+    
+    try {
+        if (token) {
+            config.token = token;
+        }
+        if (ownerIds) {
+            config.owner_ids = ownerIds;
+        }
+        if (newPrefix) {
+            config.prefix = newPrefix;
+            prefix = newPrefix;
+        }
+        if (webPort) {
+            config.web_port = webPort;
+        }
+
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf-8');
+
+        if (!client.user && config.token && config.token !== 'YOUR_DISCORD_USER_TOKEN') {
+            await client.login(config.token);
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Failed to apply config:', err);
+        res.status(400).json({ error: `Failed to connect to Discord with token: ${err.message}` });
+    }
+});
 
 // Get status API
 webApp.get('/api/status', (req, res) => {
     let channelName = null;
     let guildName = null;
-    if (voiceConnection) {
-        const channelId = voiceConnection.joinConfig.channelId;
-        const guildId = voiceConnection.joinConfig.guildId;
+    if (shoukakuPlayer) {
+        const channelId = shoukakuPlayer.channelId;
+        const guildId = shoukakuPlayer.guildId;
         const channel = client.channels.cache.get(channelId);
         if (channel) {
             channelName = channel.name;
@@ -1546,13 +1281,13 @@ webApp.get('/api/status', (req, res) => {
         }
     }
     res.json({
-        connected: !!voiceConnection,
+        connected: !!shoukakuPlayer,
         channelName,
         guildName,
         currentSong: queue[0] || null,
         queue: queue.map((song, i) => ({ title: song.title, position: i })),
-        paused: audioPlayer ? audioPlayer.state.status === AudioPlayerStatus.Paused : false,
-        playing: audioPlayer ? audioPlayer.state.status === AudioPlayerStatus.Playing : false,
+        paused: shoukakuPlayer ? shoukakuPlayer.paused : false,
+        playing: shoukakuPlayer ? !shoukakuPlayer.paused : false,
         loopStatus,
         volume: Math.round(currentVolume * 100)
     });
@@ -1605,23 +1340,22 @@ webApp.post('/api/play', async (req, res) => {
                 return res.status(400).json({ error: 'Invalid or inaccessible Voice Channel ID!' });
             }
         } else {
-            // Find owner voice channel to auto-join
             targetVc = await getTargetVoiceChannel(null, targetOwnerId);
         }
 
-        // Connect if targetVc is found and different, or connect if not connected
+        const wasPlaying = queue.length > 0;
+        const channelChanged = shoukakuPlayer && targetVc && shoukakuPlayer.channelId !== targetVc.id;
+
         if (targetVc) {
-            if (!voiceConnection || voiceConnection.joinConfig.channelId !== targetVc.id) {
-                connectToVoiceChannel(targetVc);
-            }
-        } else if (!voiceConnection) {
+            await connectToVoiceChannel(targetVc);
+        } else if (!shoukakuPlayer) {
             return res.status(400).json({ error: 'No owner is currently in a voice channel. Please join one first!' });
         }
 
         const songs = await resolveSong(query);
         queue.push(...songs);
 
-        if (queue.length === songs.length) {
+        if (queue.length === songs.length || (channelChanged && wasPlaying)) {
             playSong(null);
         }
 
@@ -1631,52 +1365,48 @@ webApp.post('/api/play', async (req, res) => {
     }
 });
 
-webApp.post('/api/pause', (req, res) => {
-    if (!audioPlayer || audioPlayer.state.status === AudioPlayerStatus.Paused) {
+webApp.post('/api/pause', async (req, res) => {
+    if (!shoukakuPlayer || shoukakuPlayer.paused) {
         return res.status(400).json({ error: 'Music is already paused or not playing' });
     }
-    audioPlayer.pause();
+    await shoukakuPlayer.setPaused(true);
     res.json({ success: true });
 });
 
-webApp.post('/api/resume', (req, res) => {
-    if (!audioPlayer || audioPlayer.state.status !== AudioPlayerStatus.Paused) {
+webApp.post('/api/resume', async (req, res) => {
+    if (!shoukakuPlayer || !shoukakuPlayer.paused) {
         return res.status(400).json({ error: 'Music is not paused' });
     }
-    audioPlayer.unpause();
+    await shoukakuPlayer.setPaused(false);
     res.json({ success: true });
 });
 
-webApp.post('/api/skip', (req, res) => {
-    if (!voiceConnection || !audioPlayer) {
+webApp.post('/api/skip', async (req, res) => {
+    if (!shoukakuPlayer) {
         return res.status(400).json({ error: 'No music is currently playing' });
     }
-    if (currentChildProcess) {
-        currentChildProcess.kill();
-        currentChildProcess = null;
-    }
-    audioPlayer.stop();
+    await shoukakuPlayer.stopTrack();
     res.json({ success: true });
 });
 
-webApp.post('/api/stop', (req, res) => {
-    if (!voiceConnection) {
+webApp.post('/api/stop', async (req, res) => {
+    let connectedGuildId = shoukakuPlayer?.guildId;
+    if (!connectedGuildId) {
+        for (const guild of client.guilds.cache.values()) {
+            const voiceState = guild.voiceStates.cache.get(client.user.id);
+            if (voiceState && voiceState.channelId) {
+                connectedGuildId = guild.id;
+                break;
+            }
+        }
+    }
+
+    if (!connectedGuildId) {
         return res.status(400).json({ error: 'Bot is not in a voice channel' });
     }
-    queue = [];
-    if (currentChildProcess) {
-        currentChildProcess.kill();
-        currentChildProcess = null;
-    }
-    if (audioPlayer) {
-        audioPlayer.stop();
-    }
-    if (voiceConnection) {
-        voiceConnection.destroy();
-        voiceConnection = null;
-        audioPlayer = null;
-        currentResource = null;
-    }
+
+    cleanupPlayerState();
+    await shoukaku.leaveVoiceChannel(connectedGuildId).catch(() => {});
     res.json({ success: true });
 });
 
@@ -1690,15 +1420,15 @@ webApp.post('/api/loop', (req, res) => {
     res.json({ success: true, loopStatus });
 });
 
-webApp.post('/api/volume', (req, res) => {
+webApp.post('/api/volume', async (req, res) => {
     const { volume } = req.body;
     const parsed = parseInt(volume, 10);
     if (isNaN(parsed) || parsed < 0 || parsed > 200) {
         return res.status(400).json({ error: 'Invalid volume level. Must be between 0 and 200' });
     }
     currentVolume = parsed / 100;
-    if (currentResource && currentResource.volume) {
-        currentResource.volume.setVolume(currentVolume);
+    if (shoukakuPlayer) {
+        await shoukakuPlayer.setGlobalVolume(parsed);
     }
     console.log(`\x1b[32m[Web API] Volume updated to: ${parsed}%\x1b[0m`);
     res.json({ success: true, volume: parsed });
@@ -1719,16 +1449,89 @@ webApp.post('/api/shuffle', (req, res) => {
     res.json({ success: true });
 });
 
+// Reconnect: Disconnect from current VC and reconnect to owner's current VC
+webApp.post('/api/reconnect', async (req, res) => {
+    const { targetOwnerId, customVcId } = req.body;
+    
+    try {
+        // Find where the owner currently is
+        let targetVc = null;
+        if (targetOwnerId === 'custom' && customVcId) {
+            const channel = await client.channels.fetch(customVcId).catch(() => null);
+            if (channel && (channel.type === 'GUILD_VOICE' || channel.type === 'GUILD_STAGE_VOICE')) {
+                targetVc = channel;
+            } else {
+                return res.status(400).json({ error: 'Invalid or inaccessible Voice Channel ID!' });
+            }
+        } else {
+            targetVc = await getTargetVoiceChannel(null, targetOwnerId);
+        }
+
+        if (!targetVc) {
+            return res.status(400).json({ error: 'No owner is currently in a voice channel. Please join a VC first!' });
+        }
+
+        // If already in the same channel, no need to reconnect
+        if (shoukakuPlayer && shoukakuPlayer.channelId === targetVc.id) {
+            return res.json({ success: true, message: 'Already connected to this voice channel!', channelName: targetVc.name });
+        }
+
+        // Disconnect from old VC if in one
+        if (shoukakuPlayer) {
+            const oldGuildId = shoukakuPlayer.guildId;
+            // Temporarily preserve queue and playback state
+            const savedQueue = [...queue];
+            const savedLoop = loopStatus;
+            const savedVolume = currentVolume;
+
+            cleanupPlayerState();
+            await shoukaku.leaveVoiceChannel(oldGuildId).catch(() => {});
+            
+            // Restore state
+            queue = savedQueue;
+            loopStatus = savedLoop;
+            currentVolume = savedVolume;
+        }
+
+        // Connect to new VC
+        await connectToVoiceChannel(targetVc);
+        
+        // Set volume back
+        if (shoukakuPlayer) {
+            await shoukakuPlayer.setGlobalVolume(Math.round(currentVolume * 100));
+        }
+        
+        // Resume playback if there was a song playing
+        if (queue.length > 0 && shoukakuPlayer) {
+            playSong(null);
+        }
+
+        console.log(`\x1b[32m[Web API] Reconnected to VC: "${targetVc.name}" in "${targetVc.guild.name}"\x1b[0m`);
+        res.json({ success: true, channelName: targetVc.name, guildName: targetVc.guild.name });
+    } catch (err) {
+        console.error('[Web API] Reconnect failed:', err);
+        res.status(500).json({ error: `Reconnect failed: ${err.message}` });
+    }
+});
+
 // Start web server helper
 function startWebServer() {
-    webApp.listen(webPort, () => {
-        console.log(`\n\x1b[32m[Success] Web Dashboard control panel is running at: http://localhost:${webPort}\x1b[0m\n`);
+    webApp.listen(webPort, '0.0.0.0', () => {
+        console.log(`\n\x1b[32m[Success] Web Dashboard control panel is running on port ${webPort}\x1b[0m\n`);
     }).on('error', (err) => {
         console.warn(`\x1b[33m[Warning] Web server failed to start on port ${webPort}: ${err.message}\x1b[0m`);
     });
 }
 
-client.login(config.token).catch(err => {
-    console.error('\n\x1b[31m[Error] Login failed! Check your token inside config.json\x1b[0m');
-    console.error(err);
-});
+// Start web server immediately
+startWebServer();
+
+// Log in if credentials exist
+if (config.token && config.token !== 'YOUR_DISCORD_USER_TOKEN') {
+    client.login(config.token).catch(err => {
+        console.error('\n\x1b[31m[Error] Login failed! Check your token inside config.json or on the settings page.\x1b[0m');
+        console.error(err);
+    });
+} else {
+    console.log(`\n\x1b[33m[Info] No Discord User Token configured. Please visit the Web Dashboard at http://localhost:${webPort} to configure and start the bot.\x1b[0m\n`);
+}

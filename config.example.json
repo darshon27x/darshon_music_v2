@@ -7,5 +7,25 @@
         "YOUR_DISCORD_USER_ID"
     ],
     "youtube_cookies_from_browser": "",
-    "youtube_cookie": "YOUR_YOUTUBE_COOKIE"
+    "youtube_cookie": "YOUR_YOUTUBE_COOKIE",
+    "lavalink_nodes": [
+        {
+            "name": "Public Node 1 (Ajieblogs)",
+            "url": "lava-v4.ajieblogs.eu.org:443",
+            "auth": "https://dsc.gg/ajidevserver",
+            "secure": true
+        },
+        {
+            "name": "Public Node 2 (Disutils)",
+            "url": "lavalink-1.is-it.pink:443",
+            "auth": "https://disutils.com",
+            "secure": true
+        },
+        {
+            "name": "Public Node 3 (Disutils Backup)",
+            "url": "lavalink-2.is-it.pink:443",
+            "auth": "https://disutils.com",
+            "secure": true
+        }
+    ]
 }

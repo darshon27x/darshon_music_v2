@@ -15,8 +15,8 @@ const statusTextEl = botStatusEl.querySelector('.status-text');
 const vcDetailsPanel = document.getElementById('vc-details-panel');
 const searchInput = document.getElementById('search-input');
 const playBtn = document.getElementById('play-btn');
-const pauseBtn = document.getElementById('pause-btn');
-const resumeBtn = document.getElementById('resume-btn');
+const playPauseBtn = document.getElementById('play-pause-btn');
+const playPauseIcon = document.getElementById('play-pause-icon');
 const skipBtn = document.getElementById('skip-btn');
 const stopBtn = document.getElementById('stop-btn');
 const currentSongCard = document.getElementById('current-song-card');
@@ -27,6 +27,7 @@ const toastContainer = document.getElementById('toast-container');
 const ownerSelect = document.getElementById('owner-select');
 const customVcGroup = document.getElementById('custom-vc-group');
 const customVcInput = document.getElementById('custom-vc-input');
+const reconnectBtn = document.getElementById('reconnect-btn');
 
 // Loop, Shuffle, and Volume DOM Elements
 const loopBtn = document.getElementById('loop-btn');
@@ -81,10 +82,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Click event listeners for controls
     playBtn.addEventListener('click', handlePlay);
-    pauseBtn.addEventListener('click', () => sendControl('pause', 'Playback paused'));
-    resumeBtn.addEventListener('click', () => sendControl('resume', 'Playback resumed'));
+    playPauseBtn.addEventListener('click', () => {
+        if (currentStatus && currentStatus.paused) {
+            sendControl('resume', 'Playback resumed');
+        } else {
+            sendControl('pause', 'Playback paused');
+        }
+    });
     skipBtn.addEventListener('click', () => sendControl('skip', 'Skipped current song'));
     stopBtn.addEventListener('click', () => sendControl('stop', 'Stopped and disconnected'));
+
+    if (reconnectBtn) {
+        reconnectBtn.addEventListener('click', handleReconnect);
+    }
 
     // Loop control
     if (loopBtn) {
@@ -112,6 +122,38 @@ document.addEventListener('DOMContentLoaded', () => {
             handlePlay();
         }
     });
+
+    // Mobile Bottom Navigation Tab Switching
+    const mobileNavItems = document.querySelectorAll('.mobile-nav-item');
+    const panels = {
+        status: document.getElementById('panel-status'),
+        player: document.getElementById('current-song-card'),
+        search: document.getElementById('panel-search')
+    };
+
+    if (mobileNavItems.length > 0) {
+        mobileNavItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const targetTab = item.getAttribute('data-tab');
+                
+                // Set active class on bottom nav buttons
+                mobileNavItems.forEach(nav => nav.classList.remove('active'));
+                item.classList.add('active');
+                
+                // Toggle visibility class on the panels
+                Object.keys(panels).forEach(key => {
+                    const panel = panels[key];
+                    if (panel) {
+                        if (key === targetTab) {
+                            panel.classList.add('active-tab');
+                        } else {
+                            panel.classList.remove('active-tab');
+                        }
+                    }
+                });
+            });
+        });
+    }
 });
 
 // Poll status from API
@@ -160,15 +202,20 @@ function updateUI(status) {
     }
 
     // 3. Play/Pause/Resume Button Toggles
-    if (status.paused) {
-        pauseBtn.classList.add('hidden');
-        resumeBtn.classList.remove('hidden');
-    } else {
-        pauseBtn.classList.remove('hidden');
-        resumeBtn.classList.add('hidden');
+    if (playPauseBtn && playPauseIcon) {
+        if (status.paused) {
+            playPauseIcon.className = 'fa-solid fa-play';
+            playPauseBtn.title = 'Resume';
+        } else {
+            playPauseIcon.className = 'fa-solid fa-pause';
+            playPauseBtn.title = 'Pause';
+        }
     }
 
     // 4. Now Playing Card Details
+    const titleEl = document.getElementById('current-song-title');
+    const statusEl = document.getElementById('current-song-status');
+
     if (status.currentSong) {
         currentSongCard.classList.add('active');
         
@@ -179,26 +226,22 @@ function updateUI(status) {
             statusText = 'Streaming from SoundCloud...';
         }
 
-        currentSongCard.innerHTML = `
-            <div class="song-info-fallback">
-                <i class="fa-solid fa-compact-disc spin-disc"></i>
-                <div class="fallback-details">
-                    <h4 id="current-song-title" title="${status.currentSong.title}">${status.currentSong.title}</h4>
-                    <p id="current-song-status">${statusText}</p>
-                </div>
-            </div>
-        `;
+        if (titleEl) {
+            titleEl.innerText = status.currentSong.title;
+            titleEl.title = status.currentSong.title;
+        }
+        if (statusEl) {
+            statusEl.innerText = statusText;
+        }
     } else {
         currentSongCard.classList.remove('active');
-        currentSongCard.innerHTML = `
-            <div class="song-info-fallback">
-                <i class="fa-solid fa-compact-disc spin-disc"></i>
-                <div class="fallback-details">
-                    <h4 id="current-song-title">No song playing</h4>
-                    <p id="current-song-status">Ready to play your favorite tracks</p>
-                </div>
-            </div>
-        `;
+        if (titleEl) {
+            titleEl.innerText = 'No song playing';
+            titleEl.removeAttribute('title');
+        }
+        if (statusEl) {
+            statusEl.innerText = 'Ready to play your favorite tracks';
+        }
     }
 
     // 5. Render Play Queue (Lazy/Optimized rendering)
@@ -297,6 +340,37 @@ async function handlePlay() {
         }
 
         showToast(`Successfully queued: "${data.song.title}"`, 'success');
+        pollStatus();
+    } catch (err) {
+        showToast(err.message, 'danger');
+    }
+}
+
+// Handle Reconnect action
+async function handleReconnect() {
+    const targetOwnerId = ownerSelect.value;
+    const customVcId = customVcInput ? customVcInput.value.trim() : '';
+
+    if (targetOwnerId === 'custom' && !customVcId) {
+        showToast('Please enter a custom Voice Channel ID', 'danger');
+        return;
+    }
+
+    showToast('Reconnecting Voice Channel...', 'success');
+
+    try {
+        const res = await fetch('/api/reconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ targetOwnerId, customVcId })
+        });
+        
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || 'Reconnect failed');
+        }
+
+        showToast(`Successfully reconnected to: "${data.channelName || 'Voice Channel'}"`, 'success');
         pollStatus();
     } catch (err) {
         showToast(err.message, 'danger');
